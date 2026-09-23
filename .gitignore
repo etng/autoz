@@ -1,0 +1,17 @@
+# 构建产物
+build/
+dist/
+*.o
+*.iconset/
+
+# 打包产物
+*.tar.gz
+
+# macOS
+.DS_Store
+._*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

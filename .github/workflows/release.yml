@@ -1,0 +1,136 @@
+name: Release
+
+# 打 v* tag 即发布；也可在 Actions 页面手动指定版本号触发（用于补发）。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v 前缀），例如 0.8.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布
+    # 产物是 arm64 + x86_64 通用二进制，构建机架构不影响结果。
+    runs-on: macos-15
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ inputs.version }}"
+          fi
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "::error::版本号格式不合法: $V"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "发布版本：$V"
+
+      - name: 构建通用二进制
+        env:
+          AUTOZ_VERSION: ${{ steps.ver.outputs.version }}
+          AUTOZ_ARCHS: "arm64 x86_64"
+        run: ./build.sh
+
+      - name: 校验产物架构与签名
+        run: |
+          set -euo pipefail
+          for BIN in "dist/AutoZ.app/Contents/MacOS/AutoZ" "dist/AutoZ.app/Contents/Resources/autoz-helper"; do
+            ARCHS="$(lipo -archs "$BIN")"
+            echo "$BIN → $ARCHS"
+            [[ "$ARCHS" == *arm64* && "$ARCHS" == *x86_64* ]] || { echo "::error::$BIN 缺少架构：$ARCHS"; exit 1; }
+          done
+          codesign --verify --verbose=1 dist/AutoZ.app
+          test -x dist/AutoZ.app/Contents/Resources/autoz-helper
+
+      - name: 打包并计算校验和
+        id: pkg
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          ASSET="AutoZ-${V}.tar.gz"
+          tar -czf "$ASSET" -C dist AutoZ.app
+          SHA="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          ls -lh "$ASSET"
+          echo "SHA-256: $SHA"
+
+      - name: 生成 Homebrew 配方
+        run: |
+          set -euo pipefail
+          sed -e "s/__VERSION__/${{ steps.ver.outputs.version }}/g" \
+              -e "s/__SHA256__/${{ steps.pkg.outputs.sha256 }}/g" \
+              .github/templates/autoz.rb.tmpl > "$RUNNER_TEMP/autoz.rb"
+          ruby -c "$RUNNER_TEMP/autoz.rb"
+          echo "--- 生成的配方 ---"
+          cat "$RUNNER_TEMP/autoz.rb"
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          TAG="v${V}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # 重跑（手动 dispatch 或 Actions 的 Re-run jobs）时必须覆盖旧资产：
+            # 每次构建的 tarball 字节不同，若沿用旧资产却把本次的 sha256 写进配方，
+            # 安装时就会校验和对不上（踩过：配方 b0ac0ccc… vs 实际 d4e83cf5…）。
+            echo "Release $TAG 已存在，用本次产物覆盖资产"
+            gh release upload "$TAG" "${{ steps.pkg.outputs.asset }}" --clobber
+          else
+            gh release create "$TAG" "${{ steps.pkg.outputs.asset }}" \
+              --title "AutoZ $V" \
+              --generate-notes
+            echo "已创建 Release $TAG"
+          fi
+
+      - name: 更新 Homebrew tap
+        env:
+          # 只对 etng/homebrew-taps 有写权限的部署密钥，避免把账号级 token 放进 CI。
+          # 轮换：ssh-keygen 生成新密钥 → gh repo deploy-key add 到 tap 仓库 → 更新本 secret。
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          TAP_DIR="$RUNNER_TEMP/tap"
+
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$HOME/.ssh/tap_deploy"
+          chmod 600 "$HOME/.ssh/tap_deploy"
+          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+
+          rm -rf "$TAP_DIR"
+          git clone --depth 1 git@github.com:etng/homebrew-taps.git "$TAP_DIR"
+
+          mkdir -p "$TAP_DIR/Casks"
+          cp "$RUNNER_TEMP/autoz.rb" "$TAP_DIR/Casks/autoz.rb"
+
+          cd "$TAP_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/autoz.rb
+          if git diff --cached --quiet; then
+            echo "配方无变化，无需提交"
+            exit 0
+          fi
+          git commit -m "autoz ${V}"
+          git push origin HEAD:main
+          echo "已推送 Casks/autoz.rb（${V}）到 etng/homebrew-taps"
