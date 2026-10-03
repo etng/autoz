@@ -62,6 +62,8 @@ final class AdvancedWindowController: NSWindowController {
     private let content     = NSStackView()
     private let scroll      = NSScrollView()
     private let footNote    = NSTextField(labelWithString: "")
+    private var statusCaption: NSTextField?
+    private var statusTicker: Timer?
 
     private init() {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 860),
@@ -124,10 +126,12 @@ final class AdvancedWindowController: NSWindowController {
 
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
+        // 常驻显示滚动条：之前用 overlay + autohide，滚动条平时是**看不见**的，
+        // 内容一超出可视区，用户根本不知道还能往下滚。
+        scroll.autohidesScrollers = false
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
-        scroll.scrollerStyle = .overlay
+        scroll.scrollerStyle = .legacy
         root.addSubview(scroll)
 
         content.orientation = .vertical
@@ -215,20 +219,64 @@ final class AdvancedWindowController: NSWindowController {
     // MARK: 展示与刷新
 
     func show() {
-        // 屏幕矮（笔记本）时别把窗口顶出屏幕
-        if let screen = NSScreen.main ?? NSScreen.screens.first, let w = window {
-            let maxH = screen.visibleFrame.height - 70
-            if w.frame.height > maxH {
-                var f = w.frame
-                f.size.height = max(460, maxH)
-                w.setFrame(f, display: false)
-            }
-        }
         refresh()
+        startStatusTicker()
         NSApp.activate(ignoringOtherApps: true)
-        window?.center()
+
+        // 高度按内容自适应：放得下就不滚动，放不下才滚。
+        // 早先固定 860 高，卡片一多就把「维护 / 关于」挤出可视区；而 overlay 滚动条平时是
+        // **隐藏**的，用户既看不到内容也不知道还能滚 —— 那才是"容不下"的真正原因。
+        if let scr = NSScreen.main ?? NSScreen.screens.first, let w = window {
+            w.contentView?.layoutSubtreeIfNeeded()
+            let chrome: CGFloat = 104 + 54          // header + footer 的固定高
+            let need = content.fittingSize.height + chrome
+            let cap = scr.visibleFrame.height - 70  // 矮屏时别顶出屏幕
+            var f = w.frame
+            f.size.height = min(max(need, 460), cap)
+            w.setFrame(f, display: false)
+            w.center()
+            log("高级配置尺寸：内容 \(Int(content.fittingSize.height)) + 外壳 \(Int(chrome)) → 窗口高 \(Int(f.size.height))（屏幕上限 \(Int(cap))）")
+        }
         window?.makeKeyAndOrderFront(nil)
         if let f = window?.frame { log("高级配置窗口已显示，frame=\(NSStringFromRect(f))") }
+    }
+
+    /// 状态区文本 —— 与菜单顶部状态区同款口径。
+    /// 菜单栏被东八区占着，所以这里必须给全「本机现在几点」+ 时区标识，
+    /// 只写 America/Los_Angeles 对不上号，还得自己换算。文案压到 4 行以内。
+    private func statusLines() -> String {
+        let store = Store.shared
+        let sys = systemZoneID()
+        let tz = systemTimeZone()
+        let now = Date()
+        let secs = store.showSeconds
+        let off = tz.secondsFromGMT(for: now) != beijingZone().secondsFromGMT(for: now)
+        var lines: [String] = []
+        lines.append("东八区    \(beijingClockText(showSeconds: secs))   \(beijingDateText())")
+        lines.append("系统时区  \(sys.isEmpty ? "未知" : sys)   \(zoneBadge(tz, at: now))"
+                     + (off ? "　⚠️ 非东八区" : "　✓ 与菜单栏显示一致"))
+        lines.append("当地时间  \(zonedTimeText(tz, showSeconds: secs, at: now))   \(beijingDeltaText(tz, at: now))")
+        if let d = store.lastDetection {
+            // 出口时区与系统时区不同时（关掉同步后常见）补上那边的时间，只写时区名还得自己换算
+            let exTZ = TimeZone(identifier: d.zoneID) ?? tz
+            let extra = exTZ.secondsFromGMT(for: now) != tz.secondsFromGMT(for: now)
+                ? "   \(zonedTimeText(exTZ, showSeconds: false, at: now))" : ""
+            lines.append("出口      \(d.ip) · \(d.locationText)  →  \(d.zoneID)\(extra)")
+        } else {
+            lines.append("出口      尚未检测")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 时间停在打开那一刻会误导（这窗口本来就有人拿来看时间），所以让它按秒跟着走。
+    /// 只更新这一个文本，**不重建卡片树** —— 否则会重置滚动位置和用户刚勾的开关。
+    private func startStatusTicker() {
+        statusTicker?.invalidate()
+        statusTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, self.window?.isVisible == true, let c = self.statusCaption else { return }
+            let t = self.statusLines()
+            if c.stringValue != t { c.stringValue = t }
+        }
     }
 
     func refresh() {
@@ -252,8 +300,6 @@ final class AdvancedWindowController: NSWindowController {
 
     private func rebuildCards(helperOK: Bool, helperInstalled: Bool) -> [NSView] {
         let store = Store.shared
-        let sys = systemZoneID()
-        let off = isOffSystemZone()
 
         // ── A. 时区同步
         let syncSwitch = NSButton(checkboxWithTitle: "跟随出口 IP 自动同步系统时区",
@@ -266,20 +312,14 @@ final class AdvancedWindowController: NSWindowController {
                               #selector(restore(_:)))
         btnBack.isEnabled = store.originalZone != nil
 
-        var detLines: [String] = []
-        if let d = store.lastDetection {
-            detLines.append("出口 IP  \(d.ip) · \(d.locationText)")
-            detLines.append("解析时区  \(d.zoneID)  ← \(d.zoneSource)")
-        } else {
-            detLines.append("出口 IP  尚未检测")
-        }
-        detLines.append("系统时区  \(sys.isEmpty ? "未知" : sys)\(off ? "　⚠️ 非东八区，菜单栏标题已变橙" : "　✓ 与菜单栏显示一致")")
-        if store.lastAction != "—" { detLines.append("上次动作  \(store.lastAction)") }
+        // 这几行与菜单顶部状态区保持同款口径（见 statusLines()）
+        let statusView = caption(statusLines())
+        statusCaption = statusView
 
         let cardA = card("时区同步", [
             syncSwitch,
             row(btnCheck, btnOnly, btnBack),
-            caption(detLines.joined(separator: "\n")),
+            statusView,
         ])
 
         // ── B. 菜单栏
@@ -288,8 +328,7 @@ final class AdvancedWindowController: NSWindowController {
         secSwitch.state = store.showSeconds ? .on : .off
         let cardB = card("菜单栏", [
             secSwitch,
-            caption("当前标题  \(beijingClockText(showSeconds: store.showSeconds))　\(beijingDateText())"),
-            caption("显示时间与系统时区不一致时，标题会变橙。"),
+            caption("标题格式跟随系统自带时钟（中文下即「10月3日 周六 08:18」）；与系统时区不一致时变橙。"),
         ])
 
         // ── B2. 启动
@@ -298,9 +337,7 @@ final class AdvancedWindowController: NSWindowController {
         loginSwitch.state = LoginItem.isEnabled ? .on : .off
         let cardB2 = card("启动", [
             loginSwitch,
-            caption("开机自启：\(LoginItem.statusText)"),
-            caption("写的是 \(LoginItem.plistURL.path)，下次登录生效；"),
-            caption("可在「系统设置 → 通用 → 登录项」里查看或撤销。"),
+            caption("\(LoginItem.statusText)。可在「系统设置 → 通用 → 登录项」里撤销。"),
         ])
 
         // ── C. 改时区方式
@@ -308,21 +345,21 @@ final class AdvancedWindowController: NSWindowController {
         let btnUninstall = button("卸载助手", #selector(uninstallHelper(_:)))
         btnUninstall.isEnabled = helperInstalled
 
-        let r1 = NSButton(radioButtonWithTitle: "免授权助手（推荐，装一次以后不再弹框）",
+        let r1 = NSButton(radioButtonWithTitle: "免授权助手（推荐）",
                           target: self, action: #selector(useHelper(_:)))
         let r2 = NSButton(radioButtonWithTitle: "一次性授权 · 原生 Security.framework",
                           target: self, action: #selector(useNative(_:)))
-        let r3 = NSButton(radioButtonWithTitle: "一次性授权 · AppleScript（回退方案）",
+        let r3 = NSButton(radioButtonWithTitle: "一次性授权 · AppleScript（回退）",
                           target: self, action: #selector(useAppleScript(_:)))
         r1.state = store.privBackend == .helper ? .on : .off
         r2.state = store.privBackend == .native ? .on : .off
         r3.state = store.privBackend == .appleScript ? .on : .off
 
         let cardC = card("改时区方式", [
-            caption(helperOK ? "助手状态：已启用（launchd 按需拉起，空闲自动退出，不常驻）"
-                             : (helperInstalled ? "助手状态：文件已就位但未响应" : "助手状态：未安装")),
+            caption(helperOK ? "助手已启用 · launchd 按需拉起，不常驻"
+                             : (helperInstalled ? "助手已就位但未响应，可重装" : "助手未安装 · 每次改时区会弹授权框")),
             row(btnInstall, btnUninstall),
-            caption("通道（改了立即生效）"),
+            caption("改时区通道（立即生效）"),
             r1, r2, r3,
         ])
 
@@ -332,15 +369,14 @@ final class AdvancedWindowController: NSWindowController {
                 button("打开运行日志", #selector(openLog(_:))),
                 button("复制诊断信息", #selector(copyDiagnostics(_:))),
                 button("测试通知", #selector(testNotification(_:)))),
-            caption("日志 ~/Library/Logs/AutoZ.log　助手日志 \(HelperK.logPath)"),
-            caption("偏好 ~/Library/Preferences/\(bundleID).plist"),
+            caption("日志 ~/Library/Logs/AutoZ.log　偏好 ~/Library/Preferences/\(bundleID).plist"
+                    + (store.lastAction != "—" ? "\n上次动作  \(store.lastAction)" : "")),
         ])
 
         // ── E. 关于（一屏内说完，详细内容在项目文档里）
         let cardE = card("关于", [
-            caption("菜单栏常显东八区（UTC+8）时间，格式跟随系统时钟；与系统时区不一致时标题变橙。开启同步后按出口 IP 写入系统时区，并关掉「自动设置时区」，随时可一键还原。"),
-            caption("出口 IP 走代理或 VPN 时，解析出的是代理所在地，不是你的实际所在地。"),
-            caption("免费开源软件（MIT）。完整说明、隐私与安全边界见项目文档 docs/。"),
+            caption("菜单栏常显东八区（UTC+8）时间；开启同步后按出口 IP 写入系统时区，并关掉「自动设置时区」，随时可一键还原。"),
+            caption("出口 IP 走代理或 VPN 时，解析出的是代理所在地。免费开源（MIT），详见 docs/。"),
         ])
 
         return [cardA, cardB, cardB2, cardC, cardD, cardE]
@@ -366,7 +402,7 @@ final class AdvancedWindowController: NSWindowController {
         let t = NSTextField(wrappingLabelWithString: text)
         t.font = .systemFont(ofSize: 12)
         t.textColor = .secondaryLabelColor
-        t.maximumNumberOfLines = 6
+        t.maximumNumberOfLines = 9
         t.preferredMaxLayoutWidth = 688
         return t
     }

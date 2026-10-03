@@ -20,7 +20,40 @@ DateFormatter.dateFormat(fromTemplate: "MMMdEEEjmm", options: 0, locale: .curren
 
 标题字号用 **13pt**（系统菜单栏时钟的字号，`NSFont.menuBarFont(ofSize: 0).pointSize` 也是 13），
 并启用等宽数字以免秒数跳动时标题宽度抖动。鼠标悬停有 tooltip 显示详细状态
-（系统时区、出口 IP、解析结果、上次操作）。
+（系统时区 + 徽标、当地时间、出口 IP、解析结果、上次操作）。
+
+### 菜单顶部的状态区
+
+菜单栏被东八区占着，所以点开菜单必须先给**本机现在几点**：只写「系统时区 America/Los_Angeles」
+对不上号，还得自己换算。于是状态区是三行：
+
+```
+东八区  12:41  2026年10月2日 周五
+系统时区  America/Los_Angeles   PDT (UTC-7)
+当地时间  10月2日 周五 21:41   比东八区晚 15 小时
+```
+
+时区徽标（`PDT (UTC-7)`）的两个来源都是坑：
+
+| 想要 | 不能用的 | 实际用的 |
+|---|---|---|
+| `PDT` / `EST` / `BST` 这类字母缩写 | `TimeZone.abbreviation(for:)` —— 本机返回的是 `GMT-7`，**没有字母** | `TimeZone.localizedName(for: .shortDaylightSaving / .shortStandard, locale: en_US)`，按 `isDaylightSavingTime` 选夏/冬 |
+| `UTC-7` | 直接拿 `secondsFromGMT` 拼字符串会漏掉半小时时区（`+5:30`） | `utcOffsetText(seconds:)`，整点给 `UTC+8`、半点给 `UTC+5:30` |
+
+ICU 对没有通行字母缩写的时区（`Asia/Shanghai`、`Asia/Tokyo`、`Asia/Kolkata`、`Australia/Sydney`）
+会返回 `GMT+8` 这类值 —— 这是**故意的**，为了避开 `CST` 这种一名多义。代码里检测到 `GMT`/`UTC`
+前缀就丢弃，统一退回 UTC 偏移，免得同一行里出现两串重复信息。
+
+出口行只在出口时区与系统时区**不同**时才补对方的时间，相同时不重复。
+
+同样这几行也出现在「高级配置…」窗口的「时区同步」卡片里（`statusLines()` 与 `menuModel()`
+复用同一批纯函数，口径不会各自漂移）。窗口那份**按秒刷新** —— 只更新这一个文本，
+不重建卡片树，否则会重置滚动位置和用户刚勾的开关。窗口高度按内容自适应
+（放得下就不滚动，矮屏才滚，滚动条设成常显；早先用 overlay 自动隐藏，内容一超出
+用户既看不到也不知道能滚）。
+
+这部分有 `AutoZ --tz-selftest`（27 项，全部用固定时间戳断言，结果不随当天日期漂移），
+`build.sh` 每次构建都会跑。
 
 ## 2. 出口 IP 与所在地时区
 

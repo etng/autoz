@@ -91,6 +91,9 @@ join_archs "$APP/Contents/Resources/autoz-helper" "${HELPER_PARTS[@]}"
 echo "==> 助手自测（11 项协议与安全用例，全部 dry-run，不碰系统）"
 "$BUILD/$HOST_ARCH/autoz-helper" --selftest || { echo "助手自测未通过，终止构建"; exit 1; }
 
+echo "==> 时区标识自测（菜单里的时区缩写 / UTC 偏移 / 当地时间，固定时间戳断言）"
+"$APP/Contents/MacOS/$APP_NAME" --tz-selftest || { echo "时区标识自测未通过，终止构建"; exit 1; }
+
 echo "==> 生成 App 图标（Sources/artwork.swift 矢量绘制 → AppIcon.icns）"
 /usr/bin/swiftc -O -swift-version 5 -parse-as-library \
   -target "$HOST_ARCH-apple-macos$MIN_MACOS" \

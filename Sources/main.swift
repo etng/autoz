@@ -1033,6 +1033,153 @@ func isOffSystemZone() -> Bool {
     return sys.secondsFromGMT(for: Date()) != beijingZone().secondsFromGMT(for: Date())
 }
 
+// MARK: - 时区标识（当地时间 / 字母缩写 / UTC 偏移）
+
+/// 秒偏移 → "UTC+8" / "UTC-7" / "UTC+5:30" / "UTC"
+func utcOffsetText(seconds: Int) -> String {
+    if seconds == 0 { return "UTC" }
+    let sign = seconds < 0 ? "-" : "+"
+    let a = abs(seconds)
+    let h = a / 3600, m = (a % 3600) / 60
+    return m == 0 ? "UTC\(sign)\(h)" : String(format: "UTC%@%d:%02d", sign, h, m)
+}
+
+/// 时区的**字母缩写**：PDT / PST / EST / EDT / BST …（按该时刻是否夏令时挑选）
+///
+/// 注意 `TimeZone.abbreviation(for:)` 在本机返回的是 "GMT+8"、"GMT-7" 这种，
+/// **拿不到字母缩写**，所以必须走 ICU 的 localizedName。
+/// 另外 ICU 对没有通行字母缩写的时区（Asia/Shanghai、Asia/Tokyo、Asia/Kolkata）
+/// 会故意返回 "GMT+8" 之类以避开歧义（CST 既可能是中国标准时间也可能是美国中部时间），
+/// 这种情况返回 nil，由调用方统一用 UTC 偏移展示，不长出两串重复信息。
+func zoneLetterAbbrev(_ tz: TimeZone, at date: Date = Date()) -> String? {
+    let style: TimeZone.NameStyle = tz.isDaylightSavingTime(for: date) ? .shortDaylightSaving : .shortStandard
+    guard let n = tz.localizedName(for: style, locale: Locale(identifier: "en_US")), !n.isEmpty else { return nil }
+    if n.hasPrefix("GMT") || n.hasPrefix("UTC") { return nil }
+    return n
+}
+
+/// 时区徽标："PDT (UTC-7)"；拿不到字母缩写时只给 "UTC-7"
+func zoneBadge(_ tz: TimeZone, at date: Date = Date()) -> String {
+    let off = utcOffsetText(seconds: tz.secondsFromGMT(for: date))
+    guard let a = zoneLetterAbbrev(tz, at: date) else { return off }
+    return "\(a) (\(off))"
+}
+
+/// 任意时区的「日期 + 星期 + 时间」，模板与菜单栏标题一致（12/24 小时偏好一并继承）
+func zonedTimeText(_ tz: TimeZone, showSeconds: Bool, at date: Date = Date()) -> String {
+    formatter(pattern: titlePattern(showSeconds: showSeconds), zone: tz).string(from: date)
+}
+
+/// 相对东八区的时差："比东八区晚 15 小时" / "比东八区早 30 分" / "与东八区一致"
+func beijingDeltaText(_ tz: TimeZone, at date: Date = Date()) -> String {
+    let mins = (tz.secondsFromGMT(for: date) - beijingZone().secondsFromGMT(for: date)) / 60
+    if mins == 0 { return "与东八区一致" }
+    let a = abs(mins), h = a / 60, m = a % 60
+    var amount = ""
+    if h > 0 { amount += "\(h) 小时" }
+    if m > 0 { amount += (h > 0 ? " " : "") + "\(m) 分" }
+    return (mins > 0 ? "比东八区早 " : "比东八区晚 ") + amount
+}
+
+/// 出口行尾注：出口时区与系统时区**不同**时补上「那边的时间 + 徽标」——
+/// 只写时区名的话还得自己换算，等于没有参考；相同时返回空串，不重复。
+func exitZoneSuffix(exitZone: TimeZone, systemZone: TimeZone, at date: Date = Date()) -> String {
+    guard exitZone.secondsFromGMT(for: date) != systemZone.secondsFromGMT(for: date) else { return "" }
+    return "   \(zonedTimeText(exitZone, showSeconds: false, at: date)) \(zoneBadge(exitZone, at: date))"
+}
+
+/// 系统时区对象：优先用 /etc/localtime 解析出的 id 构造（`TimeZone.current` 有时滞后），
+/// 拿不到就退回进程缓存的那个。
+func systemTimeZone() -> TimeZone {
+    let id = systemZoneID()
+    if !id.isEmpty, let tz = TimeZone(identifier: id) { return tz }
+    return TimeZone.current
+}
+
+/// 时区标识自测：全部用**固定时间戳**断言，结果不随当天日期漂移。
+/// 覆盖「菜单里能同时看到时区标识与该地区的当地时间」这条用户明确提出的诉求。
+func runTZSelfTest() -> Int {
+    var pass = 0, fail = 0
+    func ok(_ name: String) { pass += 1; print("  ✓ \(name)") }
+    func bad(_ name: String, _ detail: String) { fail += 1; print("  ✗ \(name)  —— \(detail)") }
+    func eq(_ name: String, _ got: String, _ want: String) {
+        got == want ? ok("\(name): \(got)") : bad(name, "得到「\(got)」，期望「\(want)」")
+    }
+    func yes(_ name: String, _ cond: Bool, _ detail: String = "") {
+        cond ? ok(name) : bad(name, detail)
+    }
+    func tz(_ id: String) -> TimeZone { TimeZone(identifier: id)! }
+
+    // 北美冬令时 / 夏令时各取一个固定时刻：用来验证缩写（PST↔PDT）确实随季节切换
+    let winter = Date(timeIntervalSince1970: 1768478400)   // 2026-01-15 12:00 UTC
+    let summer = Date(timeIntervalSince1970: 1782907200)   // 2026-07-01 12:00 UTC
+
+    print("── UTC 偏移格式 ──")
+    eq("utcOffsetText(+8h)", utcOffsetText(seconds: 8 * 3600), "UTC+8")
+    eq("utcOffsetText(-7h)", utcOffsetText(seconds: -7 * 3600), "UTC-7")
+    eq("utcOffsetText(+5:30)", utcOffsetText(seconds: 5 * 3600 + 1800), "UTC+5:30")
+    eq("utcOffsetText(0)", utcOffsetText(seconds: 0), "UTC")
+
+    print("── 字母缩写 + UTC 偏移（含夏令时切换）──")
+    eq("洛杉矶·冬", zoneBadge(tz("America/Los_Angeles"), at: winter), "PST (UTC-8)")
+    eq("洛杉矶·夏", zoneBadge(tz("America/Los_Angeles"), at: summer), "PDT (UTC-7)")
+    eq("纽约·夏", zoneBadge(tz("America/New_York"), at: summer), "EDT (UTC-4)")
+    eq("芝加哥·冬", zoneBadge(tz("America/Chicago"), at: winter), "CST (UTC-6)")
+    // ICU 对没有通行字母缩写的时区会返回 GMT+8 之类（刻意规避 CST 这类歧义缩写），
+    // 这种情况应统一退回 UTC 偏移，而不是显示成 "GMT+8"。
+    eq("上海（ICU 不给 CST）", zoneBadge(tz("Asia/Shanghai"), at: winter), "UTC+8")
+    eq("东京（ICU 不给 JST）", zoneBadge(tz("Asia/Tokyo"), at: winter), "UTC+9")
+    eq("悉尼·冬（南半球夏令时）", zoneBadge(tz("Australia/Sydney"), at: winter), "UTC+11")
+    eq("伦敦·夏（ICU 不给 BST）", zoneBadge(tz("Europe/London"), at: summer), "UTC+1")
+    eq("固定偏移时区不显示 GMT-7", zoneBadge(TimeZone(secondsFromGMT: -7 * 3600)!, at: winter), "UTC-7")
+
+    print("── 相对东八区的时差 ──")
+    eq("洛杉矶·冬", beijingDeltaText(tz("America/Los_Angeles"), at: winter), "比东八区晚 16 小时")
+    eq("洛杉矶·夏", beijingDeltaText(tz("America/Los_Angeles"), at: summer), "比东八区晚 15 小时")
+    eq("东京", beijingDeltaText(tz("Asia/Tokyo"), at: winter), "比东八区早 1 小时")
+    eq("上海", beijingDeltaText(tz("Asia/Shanghai"), at: winter), "与东八区一致")
+    eq("加尔各答（半小时偏移）", beijingDeltaText(tz("Asia/Kolkata"), at: winter), "比东八区晚 2 小时 30 分")
+
+    print("── 当地时间确实按传入时区渲染（防「忘了切时区」）──")
+    let bjText = zonedTimeText(beijingZone(), showSeconds: false, at: winter)
+    let tkText = zonedTimeText(tz("Asia/Tokyo"), showSeconds: false, at: winter)
+    let laText = zonedTimeText(tz("America/Los_Angeles"), showSeconds: false, at: winter)
+    yes("东京渲染 ≠ 洛杉矶渲染", tkText != laText, "两边都是「\(tkText)」")
+    yes("东京渲染 ≠ 东八区渲染", tkText != bjText, "两边都是「\(bjText)」")
+    eq("同时刻同偏移 → 渲染一致", zonedTimeText(tz("Asia/Shanghai"), showSeconds: false, at: winter), bjText)
+    print("     东八区=\(bjText)   东京=\(tkText)   洛杉矶=\(laText)")
+
+    print("── 出口时区与系统时区不同 → 出口行补对方的时间 ──")
+    let laZone = tz("America/Los_Angeles")
+    eq("两者相同 → 不重复显示", exitZoneSuffix(exitZone: laZone, systemZone: laZone, at: winter), "")
+    let s1 = exitZoneSuffix(exitZone: tz("Asia/Shanghai"), systemZone: laZone, at: winter)
+    yes("不同 → 带 UTC+8", s1.contains("UTC+8"), "得到「\(s1)」")
+    yes("不同 → 带具体时间", s1.contains(":"), "得到「\(s1)」")
+
+    print("── 菜单：时区标识与当地时间同时在场 ──")
+    let lines = AppDelegate().menuPreviewText().components(separatedBy: "\n")
+    func lineHas(_ key: String, _ pattern: String) -> (Bool, String) {
+        guard let l = lines.first(where: { $0.contains(key) }) else { return (false, "没有含「\(key)」的行") }
+        let r = try! NSRegularExpression(pattern: pattern)
+        return (r.firstMatch(in: l, range: NSRange(l.startIndex..<l.endIndex, in: l)) != nil,
+                l.trimmingCharacters(in: .whitespaces))
+    }
+    let (h1, l1) = lineHas("系统时区", #"UTC[+-]?\d"#)
+    yes("系统时区行带 UTC 偏移", h1, l1)
+    let (h2, l2) = lineHas("当地时间", #"\d{1,2}:\d{2}"#)
+    yes("当地时间行带具体时间", h2, l2)
+    let (h3, l3) = lineHas("当地时间", #"东八区"#)
+    yes("当地时间行带相对东八区的时差", h3, l3)
+
+    print("")
+    if fail == 0 {
+        print("全部通过：\(pass)/\(pass)")
+    } else {
+        print("失败 \(fail) 项，通过 \(pass) 项")
+    }
+    return fail == 0 ? 0 : 1
+}
+
 // MARK: - 状态存档
 
 final class Store {
@@ -1246,8 +1393,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func tooltipText() -> String {
         let sys = systemZoneID()
-        var lines = ["东八区（\(K.beijingID)）\(beijingTimeText(showSeconds: true))",
-                     "系统时区：\(sys.isEmpty ? "未知" : sys)"]
+        let sysTZ = systemTimeZone()
+        var lines = ["东八区（\(K.beijingID)）\(beijingTimeText(showSeconds: true))"]
+        lines.append("系统时区：\(sys.isEmpty ? "未知" : sys)   \(zoneBadge(sysTZ))")
+        lines.append("当地时间：\(zonedTimeText(sysTZ, showSeconds: true))   \(beijingDeltaText(sysTZ))")
         if isOffSystemZone() {
             lines.append("⚠️ 显示的不是本机时区时间")
         }
@@ -1298,14 +1447,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuModel() -> [MRow] {
         let sys = systemZoneID()
-        let off = isOffSystemZone()
+        let sysTZ = systemTimeZone()
+        let now = Date()
+        let showSec = store.showSeconds
         var rows: [MRow] = []
 
-        // ── 1. 状态：只留三行，够判断就行（其余细节都在高级配置窗口里）
-        rows.append(.info("东八区  \(beijingClockText(showSeconds: true))   \(beijingDateText())", .strong))
-        rows.append(.info("系统时区  \(sys.isEmpty ? "未知" : sys)\(off ? "   ⚠️ 非东八区，标题已变橙" : "   ✓ 与显示一致")", .info))
+        // ── 1. 状态：东八区（本程序的主角）→ 系统时区的标识与当地时间 → 出口
+        //    系统时区那两行：**光给时区名没有用**（看到 America/Los_Angeles 还得自己换算），
+        //    所以标识（IANA id + 字母缩写 + UTC 偏移）与当地时间、相对东八区的时差一起给。
+        rows.append(.info("东八区  \(beijingClockText(showSeconds: showSec))   \(beijingDateText())", .strong))
+        rows.append(.info("系统时区  \(sys.isEmpty ? "未知" : sys)   \(zoneBadge(sysTZ, at: now))", .info))
+        rows.append(.info("当地时间  \(zonedTimeText(sysTZ, showSeconds: showSec, at: now))   \(beijingDeltaText(sysTZ, at: now))", .info))
         if let det = store.lastDetection {
-            rows.append(.info("出口  \(det.ip) · \(det.locationText)  →  \(det.zoneID)", .info))
+            // 出口时区与系统时区不同（关掉同步后很常见）时，把那边的时间也带上。
+            let suffix = TimeZone(identifier: det.zoneID)
+                .map { exitZoneSuffix(exitZone: $0, systemZone: sysTZ, at: now) } ?? ""
+            rows.append(.info("出口  \(det.ip) · \(det.locationText)  →  \(det.zoneID)" + suffix, .info))
         } else {
             rows.append(.info("出口  尚未检测", .info))
         }
@@ -1903,6 +2060,9 @@ func runCLI(_ args: [String]) -> Int32 {
         pr(AppDelegate().menuPreviewText())
         return 0
 
+    case "--tz-selftest":
+        return Int32(runTZSelfTest())
+
     case "--helper-status":
         pr("免授权助手状态")
         pr("  标签:     \(HelperK.label)")
@@ -2015,6 +2175,7 @@ func runCLI(_ args: [String]) -> Int32 {
           AutoZ --system         打印当前系统时区与自动时区开关
           AutoZ --format         打印继承到的时间格式与东八区渲染结果
           AutoZ --menu           打印菜单结构（数据驱动模型渲染成文本，便于审查）
+          AutoZ --tz-selftest    自测时区标识与当地时间渲染（固定时间戳断言，不碰系统）
           AutoZ --plan [zone]    打印三条通道将执行的命令（不执行，供审查）
           AutoZ --backend <b>    切换改时区通道：helper | native | appleScript
           AutoZ --notify-status  查看通知通道说明

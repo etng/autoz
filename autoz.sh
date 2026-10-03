@@ -13,6 +13,7 @@
 #   ./autoz.sh system       打印系统时区 / 自动时区开关
 #   ./autoz.sh format       打印继承到的时间格式与东八区渲染结果
 #   ./autoz.sh menu         打印菜单结构（数据驱动模型，供审查）
+#   ./autoz.sh tz-selftest  自测时区徽标 / UTC 偏移 / 当地时间渲染（固定时间戳，不碰系统）
 #   ./autoz.sh plan [zone]  打印三条通道将执行的命令（不执行）
 #   ./autoz.sh backend [helper|native|appleScript]  查看或切换改时区通道
 #   ./autoz.sh notify       测试系统通知通道
@@ -51,6 +52,7 @@ case "$cmd" in
   system|status) exec "$BIN" --system ;;
   format|fmt)    exec "$BIN" --format ;;
   menu)          exec "$BIN" --menu ;;
+  tz-selftest|tz-test) exec "$BIN" --tz-selftest ;;
   plan)          exec "$BIN" --plan "$@" ;;
   backend)       exec "$BIN" --backend "$@" ;;
   notify|notify-test) exec "$BIN" --notify-test ;;
