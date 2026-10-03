@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoZ 界面设计稿 · 高级配置窗口 + 菜单栏下拉</title>
+<style>
+:root{
+  --bg:#f5f5f7; --card:#fff; --fg:#1d1d1f; --fg2:#6e6e73; --fg3:#98989d;
+  --line:rgba(0,0,0,.10); --line2:rgba(0,0,0,.16);
+  --accent:#d97a06; --accent-bg:rgba(217,122,6,.13);
+  --green:#1a8f3c; --green-bg:rgba(26,143,60,.12);
+  --btn:#fff; --sidebar:#f0f0f2; --sel:rgba(0,0,0,.055);
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#1c1c1e; --card:#2c2c2e; --fg:#f5f5f7; --fg2:#a1a1a6; --fg3:#8e8e93;
+    --line:rgba(255,255,255,.11); --line2:rgba(255,255,255,.20);
+    --accent:#ffa53a; --accent-bg:rgba(255,165,58,.16);
+    --green:#30d158; --green-bg:rgba(48,209,88,.16);
+    --btn:#3a3a3c; --sidebar:#252527; --sel:rgba(255,255,255,.075);
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0;padding:28px 24px 64px;background:var(--bg);color:var(--fg);
+  font:13px/1.55 -apple-system,"SF Pro Text","PingFang SC",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+header{max-width:1400px;margin:0 auto 22px}
+h1{font-size:19px;font-weight:600;margin:0 0 6px}
+.meta{font-size:12px;color:var(--fg3)}
+.wrap{max-width:1400px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 392px;gap:26px;align-items:start}
+h2{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--fg2)}
+h4{font-size:12px;font-weight:600;margin:16px 0 6px;color:var(--fg2)}
+h4:first-child{margin-top:0}
+.left>h2{margin-top:26px}
+.left>h2:first-child{margin-top:0}
+
+.win{width:880px;max-width:100%;border:1px solid var(--line2);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:0 10px 30px rgba(0,0,0,.10)}
+.win-head{height:104px;display:flex;align-items:center;gap:15px;padding:0 22px;background:var(--sidebar);border-bottom:1px solid var(--line)}
+.win-head .ico{width:60px;height:60px;flex:none}
+.win-head h5{font-size:19px;font-weight:600;margin:0;line-height:1.25}
+.win-head .s{font-size:12px;color:var(--fg2);margin:4px 0 0}
+.win-head .badge{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--fg2);margin-top:8px}
+.win-head .badge i{width:8px;height:8px;border-radius:50%;background:#30d158;display:block;flex:none}
+.win-body{display:flex;height:462px}
+.win-foot{height:54px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 18px;background:var(--sidebar);border-top:1px solid var(--line);font-size:11px;color:var(--fg2)}
+.win-foot .fs{display:flex;align-items:center;gap:6px}
+.win-foot .fs i{width:8px;height:8px;border-radius:50%;background:#30d158;display:block;flex:none}
+.win-foot .fr{display:flex;align-items:center;gap:12px}
+.nav{width:176px;flex:none;background:var(--sidebar);border-right:1px solid var(--line);padding:9px 8px}
+.nav div{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:6px;font-size:13px;color:var(--fg2);cursor:pointer}
+.nav div:hover{background:var(--sel)}
+.nav div.on{background:var(--card);color:var(--fg);font-weight:500;box-shadow:0 0 0 .5px var(--line)}
+.nav svg{flex:none;opacity:.72}
+.content{flex:1;min-width:0;overflow-y:scroll;padding:18px 20px 24px;scrollbar-gutter:stable}
+.content::-webkit-scrollbar{width:9px}
+.content::-webkit-scrollbar-track{background:transparent}
+.content::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+.page{display:none}
+.page.on{display:block}
+.page>h3{font-size:14px;font-weight:600;margin:0}
+.desc{font-size:12px;color:var(--fg2);margin:5px 0 0;max-width:616px}
+.card{border:1px solid var(--line);border-radius:10px;padding:13px 16px 15px;margin-top:13px;background:var(--card)}
+.card>.cap{font-size:12px;font-weight:600;color:var(--fg2);margin:0 0 11px}
+
+.cb,.rb{display:flex;align-items:center;gap:8px;font-size:13px;margin:0}
+input[type=checkbox],input[type=radio]{accent-color:#0a84ff;width:14px;height:14px;margin:0;flex:none}
+.rb{margin-top:7px;color:var(--fg2)}
+.rb.on{color:var(--fg)}
+
+table.kv{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:12px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+table.kv td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.kv tr:last-child td{border-bottom:0}
+td.k{width:86px;font-size:12px;color:var(--fg3)}
+td.t{width:108px;text-align:right}
+td.t .d{font-size:12px;color:var(--fg3)}
+td.t .h{font-family:var(--mono);font-size:14px;font-weight:500;margin-top:2px}
+.pill{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--sel);color:var(--fg2);white-space:nowrap}
+.pill.acc{background:var(--accent-bg);color:var(--accent)}
+.pill.ok{background:var(--green-bg);color:var(--green)}
+.sub{font-size:12px;color:var(--fg3);margin-top:2px}
+.sub.mono{font-family:var(--mono);font-size:11px}
+.row-flex{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.sep{border-top:1px solid var(--line);margin:12px 0}
+button{font:12px/1 inherit;padding:5px 11px;border-radius:6px;border:1px solid var(--line2);background:var(--btn);color:var(--fg);cursor:pointer}
+button:disabled{color:var(--fg3);opacity:.6;cursor:default}
+.vrow{display:grid;grid-template-columns:86px minmax(0,1fr);gap:11px;align-items:baseline;margin-top:8px}
+.vrow .k{font-size:12px;color:var(--fg3)}
+.vrow .v{font-size:13px}
+.vrow .v.mono{font-family:var(--mono);font-size:11px;color:var(--fg2)}
+.tick{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--green-bg);color:var(--green);flex:none}
+
+.menu-mock{width:524px;max-width:100%;border:1px solid var(--line2);border-radius:9px;background:var(--card);padding:5px 0;box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.mi{padding:4px 14px;white-space:nowrap}
+.mi.st1{font-family:var(--mono);font-size:13px;font-weight:500}
+.mi.st2{font-family:var(--mono);font-size:11px;color:var(--fg2);padding-top:3px;padding-bottom:3px}
+.mi.act{font-size:13px;display:flex;align-items:center;gap:6px}
+.mi.act.sub{padding-left:33px}
+.mi.act.b{font-weight:600}
+.msep{height:1px;background:var(--line);margin:6px 1px}
+
+aside .box{border:1px solid var(--line);border-radius:10px;padding:13px 15px;background:var(--card)}
+aside .box+ .box{margin-top:12px}
+aside ul{margin:0;padding-left:16px}
+aside li{font-size:12px;color:var(--fg2);margin:5px 0;line-height:1.6}
+aside li b{color:var(--fg);font-weight:500}
+code{font-family:var(--mono);font-size:11px;background:var(--sel);padding:1px 4px;border-radius:4px}
+@media (max-width:1080px){.wrap{grid-template-columns:minmax(0,1fr)}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AutoZ 界面设计稿 — 高级配置窗口 + 菜单栏下拉</h1>
+  <div class="meta">自适应时区（AutoZ）· 2026-10-02 · <b>已按此稿实施</b>（0.8.0）· 左栏可直接点导航切换分区</div>
+</header>
+
+<div class="wrap">
+  <div class="left">
+
+    <h2>高级配置窗口（左侧导航 + 右侧内容，滚动条常显）</h2>
+    <div class="win">
+      <div class="win-head">
+        <svg class="ico" viewBox="0 0 60 60" role="img" aria-label="应用图标">
+          <rect x="2" y="2" width="56" height="56" rx="13" fill="#e8890c"/>
+          <circle cx="30" cy="30" r="17" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-opacity=".85"/>
+          <path d="M30 19.5v11l7.5 4.5" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h5>自适应时区</h5>
+          <div class="s">菜单栏北京时间 + 出口 IP 同步系统时区</div>
+        </div>
+      </div>
+      <div class="win-body">
+        <nav class="nav" id="nav">
+          <div class="on">时区同步</div>
+          <div>菜单栏</div>
+          <div>启动</div>
+          <div>改时区方式</div>
+          <div>维护</div>
+          <div>关于</div>
+        </nav>
+        <main class="content" id="content">
+
+          <section class="page on">
+            <h3>时区同步</h3>
+            <p class="desc">程序把系统时区切到出口 IP 对应的时区，这里显示当前是否已经一致。</p>
+            <div class="card">
+              <label class="cb"><input type="checkbox" checked><span>跟随出口 IP 自动同步系统时区</span></label>
+              <table class="kv">
+                <tr>
+                  <td class="k">期望时区</td>
+                  <td>
+                    <div class="row-flex"><span>东八区</span><span class="pill acc">CST · UTC+8</span></div>
+                    <div class="sub">中国标准时间</div>
+                  </td>
+                  <td class="t"><div class="d">10月3日 周六</div><div class="h">17:35:54</div></td>
+                </tr>
+                <tr>
+                  <td class="k">实际时区</td>
+                  <td>
+                    <div class="row-flex"><span>美国西部</span><span class="pill">PDT · UTC-7</span></div>
+                    <div class="sub mono">America/Los_Angeles</div>
+                  </td>
+                  <td class="t"><div class="d">10月2日 周五</div><div class="h">02:35:54</div></td>
+                </tr>
+                <tr>
+                  <td class="k">出口时区</td>
+                  <td>
+                    <div class="row-flex"><span>美国西部</span><span class="pill ok">与系统一致</span></div>
+                    <div class="sub mono">203.0.113.7 · America/Los_Angeles</div>
+                  </td>
+                  <td class="t"><div class="d">10月2日 周五</div><div class="h">02:35:54</div></td>
+                </tr>
+                <tr>
+                  <td class="k">是否有差别</td>
+                  <td colspan="2">
+                    <div class="row-flex"><span class="pill acc">有</span><span class="sub" style="margin:0">-15h</span><button>恢复到开启前的时区</button></div>
+                  </td>
+                </tr>
+              </table>
+              <div class="sep"></div>
+              <div class="row-flex"><button>立即检查并同步</button><button>仅查询（不改系统）</button></div>
+            </div>
+            <div class="card">
+              <p class="cap">无差别时的最后一行</p>
+              <table class="kv">
+                <tr>
+                  <td class="k">是否有差别</td>
+                  <td colspan="2">
+                    <div class="row-flex"><span class="tick"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="pill ok">无</span><span class="sub" style="margin:0">已与系统时区一致，无需处理</span></div>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </section>
+
+          <section class="page">
+            <h3>菜单栏</h3>
+            <p class="desc">菜单栏标题的显示方式。</p>
+            <div class="card">
+              <label class="cb"><input type="checkbox" checked><span>在菜单栏标题里显示秒</span></label>
+              <div class="desc" style="margin-top:9px">标题格式跟随系统自带时钟（中文下即「10月3日 周六 08:18」）；与系统时区不一致时变橙。</div>
+            </div>
+          </section>
+
+          <section class="page">
+            <h3>启动</h3>
+            <p class="desc">登录后是否自动运行。</p>
+            <div class="card">
+              <label class="cb"><input type="checkbox" checked><span>登录时自动启动</span></label>
+              <div class="desc" style="margin-top:9px">已登记为登录项，可在「系统设置 → 通用 → 登录项」里撤销。</div>
+              <div class="sub mono" style="margin-top:6px">~/Library/LaunchAgents/cn.y10n.autoz.plist</div>
+            </div>
+          </section>
+
+          <section class="page">
+            <h3>改时区方式</h3>
+            <p class="desc">改系统时区要提权，这里选走哪条通道。</p>
+            <div class="card">
+              <div class="vrow"><span class="k">当前通道</span><span class="v"><span class="row-flex">免授权助手（推荐）<span class="pill ok">已启用</span></span></span></div>
+              <div class="vrow"><span class="k">运行方式</span><span class="v" style="color:var(--fg2)">launchd 按需拉起，不常驻</span></div>
+              <div class="sep"></div>
+              <div class="row-flex"><button>重新安装助手</button><button>卸载助手</button></div>
+              <div class="sub" style="margin-top:12px">可选通道（改完立即生效）</div>
+              <label class="rb on"><input type="radio" name="ch" checked><span>免授权助手（推荐）</span></label>
+              <label class="rb"><input type="radio" name="ch"><span>一次性授权 · 原生 Security.framework</span></label>
+              <label class="rb"><input type="radio" name="ch"><span>一次性授权 · AppleScript（回退）</span></label>
+            </div>
+          </section>
+
+          <section class="page">
+            <h3>维护</h3>
+            <p class="desc">诊断入口与本地文件位置。</p>
+            <div class="card">
+              <div class="row-flex"><button>打开「日期与时间」设置</button><button>打开系统日历</button></div>
+              <div class="row-flex" style="margin-top:8px"><button>打开运行日志</button><button>复制诊断信息</button></div>
+              <div class="row-flex" style="margin-top:8px"><button>测试通知</button></div>
+              <div class="sep"></div>
+              <div class="vrow"><span class="k">日志</span><span class="v mono">~/Library/Logs/AutoZ.log</span></div>
+              <div class="vrow"><span class="k">偏好</span><span class="v mono">~/Library/Preferences/cn.y10n.autoz.plist</span></div>
+              <div class="vrow"><span class="k">上次动作</span><span class="v mono">已同步到 America/Los_Angeles</span></div>
+            </div>
+          </section>
+
+          <section class="page">
+            <h3>关于</h3>
+            <div class="card">
+              <div class="desc" style="margin:0">菜单栏常显东八区（UTC+8）时间；开启同步后按出口 IP 写入系统时区，并关掉「自动设置时区」，随时可一键还原。出口 IP 走代理或 VPN 时，解析出的是代理所在地。</div>
+              <div class="sep"></div>
+              <div class="vrow"><span class="k">版本</span><span class="v mono">0.8.0 · cn.y10n.autoz</span></div>
+              <div class="vrow"><span class="k">开源仓库</span><span class="v mono">github.com/etng/autoz</span></div>
+              <div class="vrow"><span class="k">许可证</span><span class="v mono">MIT License</span></div>
+              <div class="vrow"><span class="k">文档</span><span class="v mono">docs/how-it-works.md · docs/troubleshooting.md</span></div>
+            </div>
+          </section>
+
+        </main>
+      </div>
+      <div class="win-foot">
+        <span class="fs"><i></i>免授权模式已启用 · 改时区零弹窗</span>
+        <span class="fr"><button>关闭</button></span>
+      </div>
+    </div>
+
+    <h2>菜单栏下拉（状态 3 行 + 分组操作）</h2>
+    <div class="menu-mock">
+      <div class="mi st1">东八区  17:35:54   10月3日 周六</div>
+      <div class="mi st2">系统时区  北美太平洋时间 · PDT · UTC-7   02:35:54   10月2日 周五   -15h</div>
+      <div class="mi st2">出口  203.0.113.7 · Los Angeles, California, US  →  America/Los_Angeles</div>
+      <div class="msep"></div>
+      <div class="mi act b"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>关闭同步（保持当前时区）</div>
+      <div class="mi act sub">立即检查并同步（执行一次）</div>
+      <div class="mi act b">恢复到开启前的时区（Asia/Shanghai）</div>
+      <div class="msep"></div>
+      <div class="mi act sub">高级配置…</div>
+      <div class="msep"></div>
+      <div class="mi act sub">退出 AutoZ</div>
+    </div>
+
+  </div>
+
+  <aside>
+    <div class="box">
+      <h4>窗口与布局</h4>
+      <ul>
+        <li>设置类界面一律 <b>左侧导航 + 右侧内容 + 滚动</b>，禁止把所有东西硬塞进一个框（全局约定）</li>
+        <li><b>滚动条常显</b>，不自动隐藏；否则用户既看不到下半部分、也不知道还能滚</li>
+        <li>窗口 <b>880 × 620 硬约束</b>，不被内容撑宽（曾撑成 917）</li>
+        <li>长文案宽度上限 <b>616px 硬约束</b>（只设 <code>preferredMaxLayoutWidth</code> 不钳制 intrinsicContentSize）</li>
+        <li>按秒刷新<b>只更新值字段</b>，不重建视图树（否则滚动位置和开关状态被重置）</li>
+        <li>六个分区：时区同步 / 菜单栏 / 启动 / 改时区方式 / 维护 / 关于</li>
+        <li>左侧导航<b>纯文字</b>（不放图标），选中态是<b>圆角白片 + 1px 描边</b>；不能用 AppKit 默认的强调色通栏 —— 跟右侧圆角卡片并排就是「一格方块一格圆角」</li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>窗口头部 / 脚部</h4>
+      <ul>
+        <li><b>头部 104pt</b>：应用图标 + 应用名（19pt 半粗）+ 一句话定位（12pt 灰）。只放「是什么」，不放状态</li>
+        <li><b>脚部 54pt = 常驻状态条</b>：左侧助手状态徽章（8px 圆点 + 文案），右侧只有「关闭」按钮</li>
+        <li>状态徽章三态：<b>绿</b> 免授权模式已启用 · 改时区零弹窗 / <b>橙</b> 助手已就位但没响应 · 可在下面重装 / <b>灰</b> 免授权模式未安装 · 每次改时区会弹授权框</li>
+        <li><b>去重</b>：应用名只留在头部大标题；<b>版本号与仓库 / 许可证一起进「关于」</b>（头部、脚部都不再出现）；<b>日志路径只留在「维护」分区</b></li>
+        <li>窗口标准按钮（红黄绿）隐藏、标题栏透明，顶部视觉由 104pt 头部承担</li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>状态区口径（窗口与菜单同一套）</h4>
+      <ul>
+        <li>时间 = <b>日期 + 时刻</b>（<code>10月3日 周六</code> / <code>17:35:54</code>），等宽字体、右对齐</li>
+        <li>时区标识三件套：<b>IANA 名 + 字母缩写 + UTC 偏移</b>（<code>America/Los_Angeles · PDT · UTC-7</code>）</li>
+        <li>时差用紧凑写法 <code>-15h</code>，<b>只出现在「是否有差别」行</b>，不散在时区行的小字里</li>
+        <li>是否有差别：<b>有</b> → 橙徽章 + <code>-15h</code> + 恢复按钮；<b>无</b> → 绿勾 + 「无」+ 一句话</li>
+        <li>出口信息：<b>IP · 地区 · IANA 名</b>；与系统时区一致时标绿「与系统一致」</li>
+        <li>长标识（IANA 名 / plist 路径 / 日志路径）降级为 <b>11px 等宽灰字</b></li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>菜单栏标题</h4>
+      <ul>
+        <li>格式跟随系统自带时钟：<code>10月3日 周六 08:18</code>，默认不显示秒</li>
+        <li>字号 <b>13pt</b>（实测与系统时钟墨迹宽一致：119px 对 119px）</li>
+        <li><b>不要图标</b>（原 ◇ 太小看不见）</li>
+        <li>颜色用<b>橙</b>（原红色太刺眼）；与系统时区不一致时保持橙色提示</li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>下拉菜单</h4>
+      <ul>
+        <li>整体<b>精简</b>，主次分明：状态在最上 → 主操作加粗 → 次级功能收进「高级配置…」→ 退出</li>
+        <li>总行数 ≤10（不含子菜单）；数据驱动（<code>MRow</code> 模型 → <code>render()</code>），可用 <code>--menu</code> 打印审查</li>
+        <li>状态 <b>3 行</b>：东八区 / 系统时区 / 出口</li>
+        <li><b>系统时区与出口时区不可合并</b> —— 同步生效时两者相同，关掉同步后就会分叉，都要保留</li>
+        <li>不加「期望 / 实际」这类前缀（画蛇添足）</li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>控件与按钮</h4>
+      <ul>
+        <li>动作按钮一律排在状态下面，<b>一行最多 2 个</b>（曾因一行 3 个按钮把窗口撑宽）</li>
+        <li>「恢复」只在<b>真有可恢复记录</b>时出现，平时不占位</li>
+        <li>说明文字 ≤2 行，能改成键值的就不写句子</li>
+        <li>状态用「键—值」两列：键 12px 灰、值 13px 常规，键列定宽保证值列对齐</li>
+        <li>「维护」分区的按钮（5 个）：打开「日期与时间」设置 / <b>打开系统日历</b> / 打开运行日志 / 复制诊断信息 / 测试通知</li>
+      </ul>
+    </div>
+
+    <div class="box">
+      <h4>技术约束（不改动，仅备忘）</h4>
+      <ul>
+        <li>改时区走<b>三级通道</b>：免授权助手 → 一次性授权（原生 → AppleScript）；助手接口保持窄（只认 <code>ping/state/set_zone/set_auto</code>）</li>
+        <li>特权写操作完成后<b>必须独立复核</b>（读 <code>/etc/localtime</code>），不信返回码</li>
+        <li>开机自启用<b>用户级 LaunchAgent</b>（<code>SMAppService</code> 在 ad-hoc 签名下会 SIGTRAP 崩溃）</li>
+        <li>卸载只动白名单路径，并在日志/菜单里逐条列出</li>
+        <li>自测守卫 <code>--tz-selftest</code>（27 项，固定时间戳覆盖冬令时/夏令时），<code>build.sh</code> 每次构建都跑</li>
+      </ul>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function(){
+  var navs = document.querySelectorAll('#nav div');
+  var pages = document.querySelectorAll('#content .page');
+  function go(i){
+    navs.forEach(function(x){ x.classList.remove('on'); });
+    pages.forEach(function(p){ p.classList.remove('on'); });
+    if (navs[i]) navs[i].classList.add('on');
+    if (pages[i]) pages[i].classList.add('on');
+    document.getElementById('content').scrollTop = 0;
+  }
+  navs.forEach(function(n, i){
+    n.addEventListener('click', function(){
+      go(i);
+      history.replaceState(null, '', '#p' + i);
+    });
+  });
+  var m = (location.hash || '').match(/^#p(\d+)$/);
+  if (m) go(+m[1]);
+})();
+</script>
+</body>
+</html>

@@ -1081,11 +1081,61 @@ func beijingDeltaText(_ tz: TimeZone, at date: Date = Date()) -> String {
     return (mins > 0 ? "比东八区早 " : "比东八区晚 ") + amount
 }
 
+/// 相对东八区的时差，**紧凑写法**：`-15h` / `+1h` / `-2.5h`；一致时返回空串。
+/// 只出现在「是否有差别」这一行（2026-10-02 用户要求：别散在时区行的小字里，
+/// 把时区行留给"哪个区 + 几点"）。
+func beijingDeltaShort(_ tz: TimeZone, at date: Date = Date()) -> String {
+    let mins = (tz.secondsFromGMT(for: date) - beijingZone().secondsFromGMT(for: date)) / 60
+    if mins == 0 { return "" }
+    let sign = mins < 0 ? "-" : "+"
+    let a = Double(abs(mins)) / 60
+    return a == a.rounded() ? "\(sign)\(Int(a))h" : String(format: "%@%.1fh", sign, a)
+}
+
+/// 时区的中文名（ICU 通用名）：中国标准时间 / 北美太平洋时间 / 英国时间 …
+/// 拿不到就退回 IANA id，避免界面上出现空白。
+func zoneCNName(_ tz: TimeZone) -> String {
+    let zh = Locale(identifier: "zh_CN")
+    return tz.localizedName(for: .generic, locale: zh)
+        ?? tz.localizedName(for: .standard, locale: zh)
+        ?? tz.identifier
+}
+
+/// 时区徽章："CST · UTC+8" / "PDT · UTC-7" / "UTC+5:30"
+///
+/// 与 zoneBadge 只差一处：**东八区强制给 CST**。ICU 对 Asia/Shanghai 会刻意返回 GMT+8
+/// 来规避「CST 到底是哪国标准时间」的歧义，所以 zoneBadge 里它只剩 UTC+8；
+/// 但界面上这一行永远带着「中国标准时间」的名字，上下文无歧义，补 CST 更好认。
+func zoneChipText(_ tz: TimeZone, at date: Date = Date()) -> String {
+    let off = utcOffsetText(seconds: tz.secondsFromGMT(for: date))
+    if tz.identifier == K.beijingID { return "CST · \(off)" }
+    guard let a = zoneLetterAbbrev(tz, at: date) else { return off }
+    return "\(a) · \(off)"
+}
+
+/// 仅日期 + 星期（"10月3日 周六"）—— 状态表时间列的上半行
+func zonedDateText(_ tz: TimeZone, at date: Date = Date()) -> String {
+    let raw = DateFormatter.dateFormat(fromTemplate: "MMMdEEE", options: 0, locale: Locale.current)
+        ?? "M月d日 EEE"
+    return formatter(pattern: raw, zone: tz).string(from: date)
+}
+
+/// 仅时刻（"17:35:54"）—— 状态表时间列的下半行。**始终带秒**：
+/// 两个时区的时间要在同一屏上对着看，差几秒也能看出来。
+func zonedClockText(_ tz: TimeZone, at date: Date = Date()) -> String {
+    formatter(pattern: clockPattern(showSeconds: true), zone: tz).string(from: date)
+}
+
+/// 时区整行标识：中文名 · 字母缩写 · UTC 偏移（菜单与高级配置窗口共用同一口径）
+func zoneLineText(_ tz: TimeZone, at date: Date = Date()) -> String {
+    "\(zoneCNName(tz)) · \(zoneChipText(tz, at: date))"
+}
+
 /// 出口行尾注：出口时区与系统时区**不同**时补上「那边的时间 + 徽标」——
 /// 只写时区名的话还得自己换算，等于没有参考；相同时返回空串，不重复。
 func exitZoneSuffix(exitZone: TimeZone, systemZone: TimeZone, at date: Date = Date()) -> String {
     guard exitZone.secondsFromGMT(for: date) != systemZone.secondsFromGMT(for: date) else { return "" }
-    return "   \(zonedTimeText(exitZone, showSeconds: false, at: date)) \(zoneBadge(exitZone, at: date))"
+    return "   \(zonedClockText(exitZone, at: date)) \(zoneChipText(exitZone, at: date))"
 }
 
 /// 系统时区对象：优先用 /etc/localtime 解析出的 id 构造（`TimeZone.current` 有时滞后），
@@ -1156,7 +1206,28 @@ func runTZSelfTest() -> Int {
     yes("不同 → 带 UTC+8", s1.contains("UTC+8"), "得到「\(s1)」")
     yes("不同 → 带具体时间", s1.contains(":"), "得到「\(s1)」")
 
-    print("── 菜单：时区标识与当地时间同时在场 ──")
+    print("── 紧凑时差（只出现在「是否有差别」那一行）──")
+    eq("洛杉矶·夏", beijingDeltaShort(tz("America/Los_Angeles"), at: summer), "-15h")
+    eq("洛杉矶·冬", beijingDeltaShort(tz("America/Los_Angeles"), at: winter), "-16h")
+    eq("东京", beijingDeltaShort(tz("Asia/Tokyo"), at: winter), "+1h")
+    eq("加尔各答（半小时偏移）", beijingDeltaShort(tz("Asia/Kolkata"), at: winter), "-2.5h")
+    eq("东八区自己 → 空串（整条不显示）", beijingDeltaShort(beijingZone(), at: winter), "")
+
+    print("── 中文时区名 + 徽章（窗口与菜单共用同一批函数）──")
+    eq("东八区", zoneLineText(beijingZone(), at: winter), "中国标准时间 · CST · UTC+8")
+    eq("洛杉矶·夏", zoneLineText(tz("America/Los_Angeles"), at: summer), "北美太平洋时间 · PDT · UTC-7")
+    eq("东京（ICU 不给 JST）", zoneChipText(tz("Asia/Tokyo"), at: winter), "UTC+9")
+
+    print("── 状态表时间列：日期与时刻分开给 ──")
+    let bjC = zonedClockText(beijingZone(), at: winter)
+    let laC = zonedClockText(tz("America/Los_Angeles"), at: winter)
+    yes("东八区时刻 ≠ 洛杉矶时刻", bjC != laC, "两边都是「\(bjC)」")
+    yes("时刻列带秒（两个冒号）", bjC.filter { $0 == ":" }.count == 2, bjC)
+    yes("日期列含「月」和「日」", zonedDateText(beijingZone(), at: winter).contains("月")
+        && zonedDateText(beijingZone(), at: winter).contains("日"), zonedDateText(beijingZone(), at: winter))
+    print("     东八区=\(zonedDateText(beijingZone(), at: winter)) \(bjC)   洛杉矶=\(zonedDateText(tz("America/Los_Angeles"), at: winter)) \(laC)")
+
+    print("── 菜单：三行状态，每行都要带标识 + 当地时间 ──")
     let lines = AppDelegate().menuPreviewText().components(separatedBy: "\n")
     func lineHas(_ key: String, _ pattern: String) -> (Bool, String) {
         guard let l = lines.first(where: { $0.contains(key) }) else { return (false, "没有含「\(key)」的行") }
@@ -1164,12 +1235,19 @@ func runTZSelfTest() -> Int {
         return (r.firstMatch(in: l, range: NSRange(l.startIndex..<l.endIndex, in: l)) != nil,
                 l.trimmingCharacters(in: .whitespaces))
     }
-    let (h1, l1) = lineHas("系统时区", #"UTC[+-]?\d"#)
-    yes("系统时区行带 UTC 偏移", h1, l1)
-    let (h2, l2) = lineHas("当地时间", #"\d{1,2}:\d{2}"#)
-    yes("当地时间行带具体时间", h2, l2)
-    let (h3, l3) = lineHas("当地时间", #"东八区"#)
-    yes("当地时间行带相对东八区的时差", h3, l3)
+    let (h1, l1) = lineHas("东八区", #"\d{1,3}:\d{2}:\d{2}"#)
+    yes("东八区行带时刻", h1, l1)
+    let (h2, l2) = lineHas("系统时区", #"UTC[+-]?\d"#)
+    yes("系统时区行带 UTC 偏移", h2, l2)
+    let (h3, l3) = lineHas("系统时区", #"\d{1,3}:\d{2}:\d{2}"#)
+    yes("系统时区行带当地时间", h3, l3)
+    // 系统时区正好落在东八区时不显示时差（属正常），此时跳过这一条断言
+    if systemTimeZone().secondsFromGMT(for: Date()) != beijingZone().secondsFromGMT(for: Date()) {
+        let (h4, l4) = lineHas("系统时区", #"[+-]\d+(\.\d+)?h"#)
+        yes("系统时区行带相对东八区的时差", h4, l4)
+    } else {
+        yes("系统时区即东八区 → 不显示时差（跳过）", true)
+    }
 
     print("")
     if fail == 0 {
@@ -1319,6 +1397,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
                 log("自检：自动打开高级配置窗口以便截图")
                 AdvancedWindowController.shared.show()
+
+                // --snapshot-console <png>：把窗口内容离屏渲染存盘。
+                // 比 screencapture 可靠得多 —— 不依赖屏幕录制权限、不受 Space / 遮挡影响，
+                // 窗口在别的桌面也能拿到图（2026-10-02 实测 screencapture -R 只抓当前 Space，
+                // 截出来是壁纸）。局限：NSVisualEffectView 的毛玻璃会渲染成透明，看版式足够。
+                if let i = CommandLine.arguments.firstIndex(of: "--snapshot-console"),
+                   i + 1 < CommandLine.arguments.count {
+                    let path = CommandLine.arguments[i + 1]
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { snapshotConsole(to: path) }
+                }
+                // --snapshot-all <dir>：六个分区各截一张（验证"每一页都长得对"，
+                // 比手动一个个点导航可靠，也快得多）
+                if let i = CommandLine.arguments.firstIndex(of: "--snapshot-all"),
+                   i + 1 < CommandLine.arguments.count {
+                    let dir = CommandLine.arguments[i + 1]
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { snapshotAllSections(into: dir) }
+                }
             }
         }
         if CommandLine.arguments.contains("--show-toast") {
@@ -1446,18 +1541,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuModel() -> [MRow] {
-        let sys = systemZoneID()
         let sysTZ = systemTimeZone()
         let now = Date()
-        let showSec = store.showSeconds
         var rows: [MRow] = []
 
-        // ── 1. 状态：东八区（本程序的主角）→ 系统时区的标识与当地时间 → 出口
-        //    系统时区那两行：**光给时区名没有用**（看到 America/Los_Angeles 还得自己换算），
-        //    所以标识（IANA id + 字母缩写 + UTC 偏移）与当地时间、相对东八区的时差一起给。
-        rows.append(.info("东八区  \(beijingClockText(showSeconds: showSec))   \(beijingDateText())", .strong))
-        rows.append(.info("系统时区  \(sys.isEmpty ? "未知" : sys)   \(zoneBadge(sysTZ, at: now))", .info))
-        rows.append(.info("当地时间  \(zonedTimeText(sysTZ, showSeconds: showSec, at: now))   \(beijingDeltaText(sysTZ, at: now))", .info))
+        // ── 1. 状态三行，口径与高级配置窗口的状态表**共用同一批纯函数**
+        //    （zoneLineText / zonedClockText / zonedDateText / beijingDeltaShort），
+        //    免得两处各写一份而慢慢漂移。
+        //    每行都带上「哪个区 + 几点几分 + 哪天」—— 只给 America/Los_Angeles
+        //    这种名字等于没给参考，用户还得自己换算。
+        rows.append(.info("东八区  \(beijingClockText(showSeconds: true))   \(zonedDateText(beijingZone(), at: now))", .strong))
+        //    系统时区与出口时区**不可合并**：同步生效时两者相同，关掉同步就会分叉，都要留。
+        let delta = beijingDeltaShort(sysTZ, at: now)
+        rows.append(.info("系统时区  \(zoneLineText(sysTZ, at: now))"
+                          + "   \(zonedClockText(sysTZ, at: now))   \(zonedDateText(sysTZ, at: now))"
+                          + (delta.isEmpty ? "" : "   \(delta)"), .info))
         if let det = store.lastDetection {
             // 出口时区与系统时区不同（关掉同步后很常见）时，把那边的时间也带上。
             let suffix = TimeZone(identifier: det.zoneID)
@@ -2199,7 +2297,8 @@ func runCLI(_ args: [String]) -> Int32 {
 // MARK: - 入口
 
 // --show-* 是 GUI 自检开关，不能当成 CLI 参数（否则会被 CLI 分支吃掉直接退出）
-let guiSwitches: Set<String> = ["--show-menu", "--show-console", "--show-toast", "--show-toast-offthread"]
+let guiSwitches: Set<String> = ["--show-menu", "--show-console", "--show-toast", "--show-toast-offthread",
+                                "--snapshot-console", "--snapshot-all"]
 let argv = Array(CommandLine.arguments.dropFirst()).filter { !guiSwitches.contains($0) }
 if let first = argv.first, first.hasPrefix("-") {
     exit(runCLI(argv))
@@ -2209,6 +2308,50 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
+
+/// 六个分区各离屏渲染一张（`--snapshot-all <dir>`）。配合 --show-console 使用。
+/// 每一页之间留一拍让 Auto Layout 落地，否则后一页可能还是上一页的版式。
+func snapshotAllSections(into dir: String) {
+    let names = ["01-sync", "02-menubar", "03-login", "04-backend", "05-maintenance", "06-about"]
+    func shoot(_ i: Int) {
+        guard i < names.count else {
+            log("自检：六个分区截图完成 → \(dir)")
+            return
+        }
+        AdvancedWindowController.shared.selectSectionForProbe(i)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            AdvancedWindowController.shared.window?.contentView?.layoutSubtreeIfNeeded()
+            snapshotConsole(to: "\(dir)/\(names[i]).png")
+            shoot(i + 1)
+        }
+    }
+    shoot(0)
+}
+
+/// 把高级配置窗口的内容离屏渲染成 PNG（UI 自检用，见 `--snapshot-console`）。
+/// 为什么不直接 screencapture：后者要屏幕录制权限，而且 `-R` 只抓当前 Space ——
+/// 窗口在别的桌面时截到的是壁纸。离屏渲染两者都不需要。
+func snapshotConsole(to path: String) {
+    guard let w = AdvancedWindowController.shared.window, let v = w.contentView else {
+        log("自检：截图失败 —— 窗口不存在")
+        return
+    }
+    guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else {
+        log("自检：截图失败 —— 无法创建位图")
+        return
+    }
+    v.cacheDisplay(in: v.bounds, to: rep)
+    guard let data = rep.representation(using: .png, properties: [:]) else {
+        log("自检：截图失败 —— PNG 编码失败")
+        return
+    }
+    do {
+        try data.write(to: URL(fileURLWithPath: path))
+        log("自检：窗口已离屏截图 → \(path) （\(rep.pixelsWide)×\(rep.pixelsHigh)）")
+    } catch {
+        log("自检：截图写入失败 \(error.localizedDescription)")
+    }
+}
 
 // MARK: - 高级配置窗口的动作实现
 //
@@ -2251,6 +2394,7 @@ extension AppDelegate: AutoZActions {
     }
 
     func azOpenDateSettings() { _ = openDateAndTimeSettings() }
+    func azOpenCalendar()     { _ = openCalendarApp() }
     func azCopyDiagnostics()  { copyDiagnostics(NSMenuItem()) }
     func azTestNotification() { testNotification(NSMenuItem()) }
 
