@@ -7,7 +7,7 @@
 #   ./build.sh --run          构建后直接启动
 #
 # 环境变量:
-#   AUTOZ_VERSION       版本号，写入 Info.plist（默认 0.8.0）
+#   AUTOZ_VERSION       版本号，写入 Info.plist（默认 0.8.8）
 #   AUTOZ_DISPLAY_NAME  对外显示名，写入 CFBundleDisplayName（默认「自适应时区」）
 #   AUTOZ_ARCHS         目标架构，空格分隔，如 "arm64 x86_64"（默认本机架构）
 #   AUTOZ_MIN_MACOS     最低系统版本（默认 13.0）
@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 APP_NAME="AutoZ"
-VERSION="${AUTOZ_VERSION:-0.8.0}"
+VERSION="${AUTOZ_VERSION:-0.8.8}"
 ARCHS="${AUTOZ_ARCHS:-$(uname -m)}"
 HOST_ARCH="$(uname -m)"
 MIN_MACOS="${AUTOZ_MIN_MACOS:-13.0}"
