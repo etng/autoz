@@ -1007,24 +1007,44 @@ func formatter(pattern: String, zone: TimeZone) -> DateFormatter {
     return f
 }
 
-/// 菜单栏标题文本（东八区）：日期 + 星期 + 时间
+// MARK: 中文单语 UI 的固定 locale
+//
+// 「期望时区」「中国标准时间」这些标签全是写死在代码里的中文，程序没有本地化表。
+// 日期/时刻如果跟着 `Locale.current` 走，在 en_US 机器上（比如 CI 的 macOS runner）
+// 就会渲染出 "Sat, Oct 3  1:38:41 AM" 夹在一堆中文标签中间 —— 0.8.8 的发布流水线
+// 正是这样把问题暴露出来的，本机 zh_CN 永远看不到。
+//
+// **菜单栏标题是唯一例外**：它就贴在系统时钟旁边，格式必须跟随系统（见 titlePattern）。
+let uiLocale = Locale(identifier: "zh_CN")
+
+/// 固定 zh_CN 的模板。不做 12/24 小时覆盖 —— 设计稿口径就是 24 小时制 `17:35:54`。
+func uiPattern(_ template: String, fallback: String) -> String {
+    DateFormatter.dateFormat(fromTemplate: template, options: 0, locale: uiLocale) ?? fallback
+}
+
+/// 固定 zh_CN 的格式化器（窗口状态表与下拉菜单共用）
+func uiFormatter(pattern: String, zone: TimeZone) -> DateFormatter {
+    let f = DateFormatter()
+    f.locale = uiLocale
+    f.timeZone = zone
+    f.dateFormat = pattern
+    return f
+}
+
+/// 菜单栏标题文本（东八区）：日期 + 星期 + 时间。**跟随系统**，不固定 locale。
 func beijingTimeText(showSeconds: Bool) -> String {
     formatter(pattern: titlePattern(showSeconds: showSeconds), zone: beijingZone()).string(from: Date())
 }
 
-/// 仅时间（东八区），菜单里用
+/// 仅时间（东八区），菜单状态行里用
 func beijingClockText(showSeconds: Bool) -> String {
-    formatter(pattern: clockPattern(showSeconds: showSeconds), zone: beijingZone()).string(from: Date())
+    let p = uiPattern("jmm" + (showSeconds ? "ss" : ""), fallback: showSeconds ? "HH:mm:ss" : "HH:mm")
+    return uiFormatter(pattern: p, zone: beijingZone()).string(from: Date())
 }
 
 func beijingDateText() -> String {
-    let raw = DateFormatter.dateFormat(fromTemplate: "yMMMdEEE", options: 0, locale: Locale.current)
-        ?? "yyyy年M月d日 EEE"
-    let f = DateFormatter()
-    f.locale = Locale.current
-    f.timeZone = beijingZone()
-    f.dateFormat = raw
-    return f.string(from: Date())
+    uiFormatter(pattern: uiPattern("yMMMdEEE", fallback: "yyyy年M月d日 EEE"),
+                zone: beijingZone()).string(from: Date())
 }
 
 /// 显示的东八区时间是否与系统当前时区「不是同一时刻的表盘」
@@ -1113,17 +1133,16 @@ func zoneChipText(_ tz: TimeZone, at date: Date = Date()) -> String {
     return "\(a) · \(off)"
 }
 
-/// 仅日期 + 星期（"10月3日 周六"）—— 状态表时间列的上半行
+/// 仅日期 + 星期（"10月3日 周六"）—— 状态表时间列的上半行。
+/// locale 固定 zh_CN：与同一张表里的中文标签保持一致，不随系统语言漂成 "Sat, Oct 3"。
 func zonedDateText(_ tz: TimeZone, at date: Date = Date()) -> String {
-    let raw = DateFormatter.dateFormat(fromTemplate: "MMMdEEE", options: 0, locale: Locale.current)
-        ?? "M月d日 EEE"
-    return formatter(pattern: raw, zone: tz).string(from: date)
+    uiFormatter(pattern: uiPattern("MMMdEEE", fallback: "M月d日 EEE"), zone: tz).string(from: date)
 }
 
 /// 仅时刻（"17:35:54"）—— 状态表时间列的下半行。**始终带秒**：
 /// 两个时区的时间要在同一屏上对着看，差几秒也能看出来。
 func zonedClockText(_ tz: TimeZone, at date: Date = Date()) -> String {
-    formatter(pattern: clockPattern(showSeconds: true), zone: tz).string(from: date)
+    uiFormatter(pattern: uiPattern("jmmss", fallback: "HH:mm:ss"), zone: tz).string(from: date)
 }
 
 /// 时区整行标识：中文名 · 字母缩写 · UTC 偏移（菜单与高级配置窗口共用同一口径）
@@ -1237,8 +1256,10 @@ func runTZSelfTest() -> Int {
     }
     let (h1, l1) = lineHas("东八区", #"\d{1,3}:\d{2}:\d{2}"#)
     yes("东八区行带时刻", h1, l1)
-    let (h2, l2) = lineHas("系统时区", #"UTC[+-]?\d"#)
-    yes("系统时区行带 UTC 偏移", h2, l2)
+    // 系统时区正好是 UTC 时（CI 的 runner 就是），徽章只有 "UTC"——偏移 0 不加符号，
+    // 所以不能要求 UTC 后面必须跟数字；改成要求它以徽章形式出现在 "·" 之后。
+    let (h2, l2) = lineHas("系统时区", #"·\s*UTC([+-]\d+(:\d{2})?)?"#)
+    yes("系统时区行带 UTC 徽章", h2, l2)
     let (h3, l3) = lineHas("系统时区", #"\d{1,3}:\d{2}:\d{2}"#)
     yes("系统时区行带当地时间", h3, l3)
     // 系统时区正好落在东八区时不显示时差（属正常），此时跳过这一条断言
