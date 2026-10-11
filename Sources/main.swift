@@ -1295,8 +1295,12 @@ func runTZSelfTest() -> Int {
     let homeID = Store.shared.homeZone
     let homeTZ = TimeZone(identifier: homeID)
     yes("归位时区是合法 IANA 标识", homeTZ != nil, homeID)
-    let homeLine = lines.first { $0.contains("回到归位时区") } ?? ""
-    yes("菜单含「回到归位时区」项", !homeLine.isEmpty, homeLine)
+    // 匹配必须带左括号：同步开启时菜单首项是「关闭同步并回到归位时区」，
+    // 它只是**刚好也含这几个字**、且不带时区名（正文在 tooltip 里）。
+    // 用裸的 contains("回到归位时区") 会随同步开关的开/关命中不同的行，
+    // 断言跟着本机状态漂 —— 2026-10-11 在 syncEnabled=true 的机器上挂过一项。
+    let homeLine = lines.first { $0.contains("回到归位时区（") } ?? ""
+    yes("菜单含「回到归位时区（…）」项", !homeLine.isEmpty, homeLine)
     yes("该菜单项写出归位时区的中文名",
         homeLine.contains(homeTZ.map { zoneCNName($0) } ?? homeID), homeLine)
     yes("菜单不再出现旧口径「恢复到开启前的时区」",
