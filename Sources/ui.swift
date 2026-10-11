@@ -55,7 +55,9 @@ protocol AutoZActions: AnyObject {
     func azToggleSync()
     func azCheckAndSync()
     func azCheckOnly()
-    func azRestore()
+    func azRestoreHome()
+    func azSetHomeZone(_ id: String)
+    func azSetAutoHome(_ on: Bool)
     func azSetShowSeconds(_ on: Bool)
     func azSetLaunchAtLogin(_ on: Bool)
     func azInstallHelper()
@@ -875,11 +877,12 @@ final class AdvancedWindowController: NSWindowController, NSTableViewDataSource,
             delta.font = Theme.mono11
             delta.textColor = .secondaryLabelColor
             var views: [NSView] = [AZPill("有", .accent), delta]
-            if let orig = Store.shared.originalZone {
-                let b = button("恢复到开启前的时区", #selector(restore(_:)))
-                b.toolTip = "把系统时区改回 \(orig)，并关闭同步"
-                views.append(b)
-            }
+            // 归位目标固定取「归位时区」，不再取决于有没有快照记录 ——
+            // 快照可能被跟随功能自己写脏，拿它当恢复目标会把人送回代理时区。
+            let home = Store.shared.homeZone
+            let b = button("回到归位时区", #selector(restore(_:)))
+            b.toolTip = "把系统时区写回归位时区 \(home)，并关闭同步"
+            views.append(b)
             s.setViews(views, in: .leading)
         } else {
             s.setViews([AZTick(), AZPill("无", .ok),
@@ -968,12 +971,30 @@ final class AdvancedWindowController: NSWindowController, NSTableViewDataSource,
 
         let table = makeStatusTable()
         let sep = hrule()
+
+        // 归位时区：关掉跟随 / 退出程序时系统时区写回哪里。
+        // 早先按「开启同步那一刻的快照」恢复，而快照会被跟随功能自己写脏
+        // （实测被写成 America/Los_Angeles，用户点恢复反而回到代理时区），
+        // 所以改成显式配置，默认东八区。
+        let homeTZ = TimeZone(identifier: store.homeZone)
+        let homeValue = NSTextField(labelWithString: homeTZ.map { zoneLineText($0) } ?? store.homeZone)
+        homeValue.font = .systemFont(ofSize: 13)
+        homeValue.textColor = .labelColor
+        homeValue.lineBreakMode = .byTruncatingTail
+        homeValue.toolTip = store.homeZone
+        let homeRow = vrow("归位时区", hstack([homeValue, button("更改…", #selector(pickHomeZone(_:)))]))
+
+        let autoHome = NSButton(checkboxWithTitle: "关闭跟随或退出程序时自动归位到该时区",
+                                target: self, action: #selector(toggleAutoHome(_:)))
+        autoHome.state = store.autoHome ? .on : .off
+
         let btns = row(button("立即检查并同步", #selector(checkAndSync(_:))),
                        button("仅查询（不改系统）", #selector(checkOnly(_:))))
 
-        let card = AZCard([syncSwitch, table, sep, btns])
+        let card = AZCard([syncSwitch, table, sep, homeRow, autoHome, btns])
         card.stretch(table)
         card.stretch(sep)
+        card.stretch(homeRow)
         return card
     }
 
@@ -1164,13 +1185,69 @@ final class AdvancedWindowController: NSWindowController, NSTableViewDataSource,
         return t
     }
 
+    // MARK: 归位时区
+
+    /// 选归位时区：可输入筛选的 IANA 标识列表（全量 400+，靠输入缩小范围，不用笨重下拉）。
+    /// 条目文本与解析分别用 `homeZonePickerItem` / `zoneIDFromPickerInput`（纯函数，可自测）。
+    private func chooseHomeZone() {
+        let current = Store.shared.homeZone
+        let items = TimeZone.knownTimeZoneIdentifiers.sorted().map { homeZonePickerItem($0) }
+
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 78))
+        let hint = NSTextField(labelWithString: "输入片段筛选（shanghai / tokyo / los），或从列表里挑：")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        hint.frame = NSRect(x: 0, y: 58, width: 400, height: 16)
+
+        let combo = NSComboBox()
+        combo.usesDataSource = false
+        combo.completes = true
+        combo.numberOfVisibleItems = 12
+        combo.addItems(withObjectValues: items)
+        combo.stringValue = homeZonePickerItem(current)
+        combo.frame = NSRect(x: 0, y: 26, width: 400, height: 26)
+
+        let note = NSTextField(labelWithString: "关闭「跟随出口 IP」和退出 AutoZ 时，系统时区会写回这里。")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .tertiaryLabelColor
+        note.frame = NSRect(x: 0, y: 2, width: 400, height: 16)
+
+        host.addSubview(hint)
+        host.addSubview(combo)
+        host.addSubview(note)
+
+        let a = NSAlert()
+        a.messageText = "归位时区"
+        a.informativeText = "当前：\(homeZonePickerItem(current))"
+        a.addButton(withTitle: "保存")
+        a.addButton(withTitle: "取消")
+        a.accessoryView = host
+        a.window.initialFirstResponder = combo
+
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        guard let id = zoneIDFromPickerInput(combo.stringValue) else {
+            let bad = NSAlert()
+            bad.messageText = "认不出这个时区"
+            bad.informativeText = "「\(combo.stringValue)」无法匹配到唯一的时区标识，"
+                + "请用 IANA 名（例如 Asia/Shanghai）或更具体的片段。"
+            bad.addButton(withTitle: "知道了")
+            bad.runModal()
+            return
+        }
+        actions?.azSetHomeZone(id)
+    }
+
     // MARK: 动作转发（界面层不碰业务，全部交回 AppDelegate）
 
     @objc private func closeConsole(_ sender: Any) { window?.orderOut(nil) }
     @objc private func toggleSync(_ sender: Any)   { actions?.azToggleSync() }
     @objc private func checkAndSync(_ sender: Any) { actions?.azCheckAndSync() }
     @objc private func checkOnly(_ sender: Any)    { actions?.azCheckOnly() }
-    @objc private func restore(_ sender: Any)      { actions?.azRestore() }
+    @objc private func restore(_ sender: Any)      { actions?.azRestoreHome() }
+    @objc private func pickHomeZone(_ sender: Any) { chooseHomeZone() }
+    @objc private func toggleAutoHome(_ sender: Any) {
+        actions?.azSetAutoHome((sender as? NSButton)?.state == .on)
+    }
     @objc private func toggleSeconds(_ sender: Any) { actions?.azSetShowSeconds((sender as? NSButton)?.state == .on) }
     @objc private func toggleLaunchAtLogin(_ sender: Any) { actions?.azSetLaunchAtLogin((sender as? NSButton)?.state == .on) }
     @objc private func installHelper(_ sender: Any) { actions?.azInstallHelper() }

@@ -178,11 +178,17 @@ code{font-family:var(--mono);font-size:11px;background:var(--sel);padding:1px 4p
                 <tr>
                   <td class="k">是否有差别</td>
                   <td colspan="2">
-                    <div class="row-flex"><span class="pill acc">有</span><span class="sub" style="margin:0">-15h</span><button>恢复到开启前的时区</button></div>
+                    <div class="row-flex"><span class="pill acc">有</span><span class="sub" style="margin:0">-15h</span><button>回到归位时区</button></div>
                   </td>
                 </tr>
               </table>
               <div class="sep"></div>
+              <div class="row-flex" style="align-items:center">
+                <span class="sub" style="margin:0;min-width:66px">归位时区</span>
+                <span>中国标准时间 · CST · UTC+8</span>
+                <button>更改…</button>
+              </div>
+              <label class="cb"><input type="checkbox" checked><span>关闭跟随或退出程序时自动归位到该时区</span></label>
               <div class="row-flex"><button>立即检查并同步</button><button>仅查询（不改系统）</button></div>
             </div>
             <div class="card">
@@ -272,9 +278,9 @@ code{font-family:var(--mono);font-size:11px;background:var(--sel);padding:1px 4p
       <div class="mi st2">系统时区  北美太平洋时间 · PDT · UTC-7   02:35:54   10月2日 周五   -15h</div>
       <div class="mi st2">出口  203.0.113.7 · Los Angeles, California, US  →  America/Los_Angeles</div>
       <div class="msep"></div>
-      <div class="mi act b"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>关闭同步（保持当前时区）</div>
+      <div class="mi act b"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6.5" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>关闭同步并回到归位时区</div>
       <div class="mi act sub">立即检查并同步（执行一次）</div>
-      <div class="mi act b">恢复到开启前的时区（Asia/Shanghai）</div>
+      <div class="mi act b">回到归位时区（中国标准时间 · CST · UTC+8）</div>
       <div class="msep"></div>
       <div class="mi act sub">高级配置…</div>
       <div class="msep"></div>
@@ -314,7 +320,7 @@ code{font-family:var(--mono);font-size:11px;background:var(--sel);padding:1px 4p
         <li>时间 = <b>日期 + 时刻</b>（<code>10月3日 周六</code> / <code>17:35:54</code>），等宽字体、右对齐</li>
         <li>时区标识三件套：<b>IANA 名 + 字母缩写 + UTC 偏移</b>（<code>America/Los_Angeles · PDT · UTC-7</code>）</li>
         <li>时差用紧凑写法 <code>-15h</code>，<b>只出现在「是否有差别」行</b>，不散在时区行的小字里</li>
-        <li>是否有差别：<b>有</b> → 橙徽章 + <code>-15h</code> + 恢复按钮；<b>无</b> → 绿勾 + 「无」+ 一句话</li>
+        <li>是否有差别：<b>有</b> → 橙徽章 + <code>-15h</code> + 「回到归位时区」按钮；<b>无</b> → 绿勾 + 「无」+ 一句话</li>
         <li>出口信息：<b>IP · 地区 · IANA 名</b>；与系统时区一致时标绿「与系统一致」</li>
         <li>长标识（IANA 名 / plist 路径 / 日志路径）降级为 <b>11px 等宽灰字</b></li>
       </ul>
@@ -345,7 +351,10 @@ code{font-family:var(--mono);font-size:11px;background:var(--sel);padding:1px 4p
       <h4>控件与按钮</h4>
       <ul>
         <li>动作按钮一律排在状态下面，<b>一行最多 2 个</b>（曾因一行 3 个按钮把窗口撑宽）</li>
-        <li>「恢复」只在<b>真有可恢复记录</b>时出现，平时不占位</li>
+        <li><b>归位时区</b>（默认 <code>Asia/Shanghai</code>）在「时区同步」里可改：关闭跟随与退出程序都写回它；
+          早先按「开启同步前的快照」恢复，快照会被跟随功能自己写脏（实测被写成 <code>America/Los_Angeles</code>），已弃用</li>
+        <li><b>回到归位时区</b>按钮恒定出现（不再依赖「有没有可恢复记录」），因为目标是个配置值而不是快照</li>
+        <li>退出归位只在<b>免授权助手就绪</b>时执行 —— 否则会在退出路径上弹授权框、把退出卡住</li>
         <li>说明文字 ≤2 行，能改成键值的就不写句子</li>
         <li>状态用「键—值」两列：键 12px 灰、值 13px 常规，键列定宽保证值列对齐</li>
         <li>「维护」分区的按钮（5 个）：打开「日期与时间」设置 / <b>打开系统日历</b> / 打开运行日志 / 复制诊断信息 / 测试通知</li>

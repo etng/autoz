@@ -1157,6 +1157,27 @@ func exitZoneSuffix(exitZone: TimeZone, systemZone: TimeZone, at date: Date = Da
     return "   \(zonedClockText(exitZone, at: date)) \(zoneChipText(exitZone, at: date))"
 }
 
+/// 归位时区选择器里的条目文本：「Asia/Shanghai    中国标准时间 · CST · UTC+8」
+func homeZonePickerItem(_ id: String, at date: Date = Date()) -> String {
+    guard let tz = TimeZone(identifier: id) else { return id }
+    return "\(id)    \(zoneLineText(tz, at: date))"
+}
+
+/// 把选择器里的用户输入解析成合法 IANA 标识。
+/// 两种输入都要认：从列表里选的整行（取第一段）、手敲的片段（模糊匹配，**唯一命中**才认，
+/// 避免 "san" 这种一下命中十几个的歧义输入被猜错）。
+func zoneIDFromPickerInput(_ raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if let first = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init),
+       TimeZone(identifier: first) != nil {
+        return first
+    }
+    let key = trimmed.lowercased()
+    let hits = TimeZone.knownTimeZoneIdentifiers.filter { $0.lowercased().contains(key) }
+    return hits.count == 1 ? hits[0] : nil
+}
+
 /// 系统时区对象：优先用 /etc/localtime 解析出的 id 构造（`TimeZone.current` 有时滞后），
 /// 拿不到就退回进程缓存的那个。
 func systemTimeZone() -> TimeZone {
@@ -1270,6 +1291,28 @@ func runTZSelfTest() -> Int {
         yes("系统时区即东八区 → 不显示时差（跳过）", true)
     }
 
+    print("── 归位时区：恢复目标固定为配置值，不再吃被写脏的旧快照 ──")
+    let homeID = Store.shared.homeZone
+    let homeTZ = TimeZone(identifier: homeID)
+    yes("归位时区是合法 IANA 标识", homeTZ != nil, homeID)
+    let homeLine = lines.first { $0.contains("回到归位时区") } ?? ""
+    yes("菜单含「回到归位时区」项", !homeLine.isEmpty, homeLine)
+    yes("该菜单项写出归位时区的中文名",
+        homeLine.contains(homeTZ.map { zoneCNName($0) } ?? homeID), homeLine)
+    yes("菜单不再出现旧口径「恢复到开启前的时区」",
+        !lines.contains { $0.contains("恢复到开启前的时区") })
+
+    print("── 归位时区选择器：整行 / 片段 / 歧义 / 空输入 ──")
+    let item = homeZonePickerItem("Asia/Shanghai")
+    yes("整行解析回 IANA 标识", zoneIDFromPickerInput(item) == "Asia/Shanghai", item)
+    yes("片段「shanghai」唯一命中 → Asia/Shanghai",
+        zoneIDFromPickerInput("shanghai") == "Asia/Shanghai",
+        String(describing: zoneIDFromPickerInput("shanghai")))
+    yes("空输入 → nil", zoneIDFromPickerInput("   ") == nil)
+    let ambiguous = TimeZone.knownTimeZoneIdentifiers.filter { $0.lowercased().contains("america") }
+    yes("歧义输入「america」→ nil（不猜，命中 \(ambiguous.count) 条）",
+        zoneIDFromPickerInput("america") == nil)
+
     print("")
     if fail == 0 {
         print("全部通过：\(pass)/\(pass)")
@@ -1304,6 +1347,26 @@ final class Store {
             if let v = newValue { d.set(v, forKey: "originalAutoTZ") }
             else { d.removeObject(forKey: "originalAutoTZ") }
         }
+    }
+
+    /// **归位时区**：关闭「跟随出口 IP」或退出程序时，把系统时区写回这里。
+    ///
+    /// 默认东八区。早先的恢复目标是「开启同步那一刻的时区快照」（originalZone），
+    /// 但那个快照会被跟随功能自己污染 —— 一旦某次跟随把系统时区改成了代理所在地，
+    /// 之后重启再开同步，快照就把这个「假原始值」固化下来，用户点恢复反而回到代理时区
+    /// （实测：快照被写成 America/Los_Angeles）。用户在中国，归位点本就该是
+    /// 中国标准时间，所以改成显式配置（2026-10-11 定）。
+    var homeZone: String {
+        get { d.string(forKey: "homeZone") ?? K.beijingID }
+        set { d.set(newValue, forKey: "homeZone") }
+    }
+
+    /// 关闭跟随 / 退出程序时是否自动归位（默认开）。
+    /// 退出归位只在免授权助手就绪时执行，见 `applicationWillTerminate` ——
+    /// 否则会在退出路径上弹授权框，把退出卡住。
+    var autoHome: Bool {
+        get { d.object(forKey: "autoHome") == nil ? true : d.bool(forKey: "autoHome") }
+        set { d.set(newValue, forKey: "autoHome") }
     }
     var lastDetection: Detection? {
         get { d.data(forKey: "lastDetection").flatMap { try? JSONDecoder().decode(Detection.self, from: $0) } }
@@ -1345,6 +1408,18 @@ final class Store {
             log("配置迁移 → v3：标题格式改为跟随系统时钟（日期+星期+时间，默认不带秒）")
             showSeconds = false
             configVersion = 3
+        }
+        if configVersion < 4 {
+            // 恢复目标由「开启前的快照」改为「归位时区」。快照可能已被跟随功能自己写脏
+            // （例如写成代理所在地），留着既没用又容易被误读成"原始时区"，直接清掉。
+            if let old = originalZone {
+                log("配置迁移 → v4：恢复目标改为归位时区（\(homeZone)），清掉旧快照 \(old)")
+                originalZone = nil
+                originalAutoTZ = nil
+            } else {
+                log("配置迁移 → v4：恢复目标改为归位时区（\(homeZone)）")
+            }
+            configVersion = 4
         }
     }
 }
@@ -1479,6 +1554,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ n: Notification) {
         log("AutoZ 退出")
+        // 退出归位：把系统时区写回「归位时区」（默认东八区）。
+        // 只在免授权助手就绪时做 —— 否则退出路径上会弹授权框，把退出卡住。
+        guard store.syncEnabled, store.autoHome else {
+            log("退出归位：跳过（同步未开启，或已关闭自动归位）")
+            return
+        }
+        let home = store.homeZone
+        let cur = systemZoneID()
+        guard cur != home else {
+            log("退出归位：系统时区已是 \(home)，无需修改")
+            return
+        }
+        guard store.privBackend == .helper, HelperChannel.socketExists else {
+            log("退出归位：跳过（免授权助手不可用，不在此处弹授权框）；当前 \(cur)，归位目标 \(home)")
+            return
+        }
+        switch applySystemZone(home, autoTZ: store.originalAutoTZ) {
+        case .changed(let z): log("退出归位：\(cur) → \(z)")
+        case .already(let z): log("退出归位：已是 \(z)")
+        case .cancelled:      log("退出归位：被取消")
+        case .failed(let e):  log("退出归位失败：\(e)")
+        }
     }
 
     // ---- 标题渲染 ----
@@ -1588,12 +1685,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         rows.append(.sep)
 
-        // ── 2. 主操作：把「同步开关 / 立即执行一次 / 退回原时区」三件事分开，别再互相混
-        let orig = store.originalZone
+        // ── 2. 主操作：把「同步开关 / 立即执行一次 / 回到归位时区」三件事分开，别再互相混
+        let homeID = store.homeZone
+        let homeTZ = TimeZone(identifier: homeID)
+        let homeLabel = homeTZ.map { zoneLineText($0, at: now) } ?? homeID
         if store.syncEnabled {
-            rows.append(.action(title: "关闭同步（保持当前时区）", sel: #selector(toggleSync(_:)),
+            rows.append(.action(title: store.autoHome ? "关闭同步并回到归位时区" : "关闭同步（保持当前时区）",
+                                sel: #selector(toggleSync(_:)),
                                 enabled: !busy, checked: true, style: .primary,
-                                tip: "只是不再自动跟随出口 IP；想变回原来的时区，用下面的「恢复到开启前的时区」"))
+                                tip: store.autoHome
+                                    ? "关掉自动跟随，并把系统时区写回归位时区（\(homeLabel)）"
+                                    : "只关掉自动跟随，不动系统时区（自动归位已在高级配置里关掉）"))
         } else {
             rows.append(.action(title: "开启同步（跟随出口 IP）", sel: #selector(toggleSync(_:)),
                                 enabled: !busy, checked: false, style: .primary,
@@ -1602,10 +1704,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rows.append(.action(title: "立即检查并同步（执行一次）", sel: #selector(checkAndSync(_:)),
                             enabled: !busy, checked: false, style: .normal,
                             tip: "不管开关状态，现在就查一次出口 IP 并应用（未装助手时会弹授权框）"))
-        rows.append(.action(title: orig.map { "恢复到开启前的时区（\($0)）" } ?? "恢复到开启前的时区（无可恢复记录）",
-                            sel: #selector(restoreOriginal(_:)), enabled: !busy && orig != nil,
+        rows.append(.action(title: "回到归位时区（\(homeLabel)）",
+                            sel: #selector(restoreHome(_:)), enabled: !busy,
                             checked: false, style: .primary,
-                            tip: "把系统时区改回开启同步之前的值，还原「自动设置时区」开关，并关闭同步"))
+                            tip: "把系统时区写回归位时区 \(homeID)，还原「自动设置时区」开关，并关闭同步"))
 
         rows.append(.sep)
 
@@ -1790,13 +1892,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleSync(_ sender: NSMenuItem) {
         if store.syncEnabled {
-            // 只关开关，不动系统时区 —— 「退回原时区」是另一件事（菜单里单独一项），
-            // 这样两个动作的语义不会再互相混。
             store.syncEnabled = false
-            store.lastAction = "已关闭同步（时区保持 \(systemZoneID())）"
             stopFollowing()
-            log("关闭同步开关（不修改系统时区）")
-            let tip = store.originalZone.map { "，当前仍为 \(systemZoneID())；想回到 \($0) 用「恢复到开启前的时区」" } ?? ""
+            let home = store.homeZone
+            let cur = systemZoneID()
+            // 关掉跟随 = 不再按出口 IP 走，顺手把系统时区写回归位时区（默认东八区）。
+            // 只有「已经不在归位时区」且用户没关掉自动归位时才动手，否则纯关开关。
+            if store.autoHome, cur != home {
+                store.lastAction = "关闭同步并归位 → \(home)"
+                log("关闭同步开关：自动归位 \(cur) → \(home)")
+                notify(title: "AutoZ 已关闭同步",
+                       message: "不再跟随出口 IP，正在把系统时区写回 \(home)…")
+                after { [weak self] in
+                    guard let self = self else { return }
+                    switch applySystemZone(home, autoTZ: self.store.originalAutoTZ) {
+                    case .changed(let z):
+                        self.store.lastAction = "关闭同步 → 已归位 \(z)"
+                        log("关闭同步归位成功 → \(z)")
+                        notify(title: "AutoZ 已归位", message: "系统时区 = \(z)")
+                    case .already(let z):
+                        log("关闭同步归位：已是 \(z)")
+                    case .cancelled:
+                        notify(title: "AutoZ", message: "已取消，系统时区仍是 \(cur)")
+                    case .failed(let e):
+                        notify(title: "AutoZ 归位失败", message: e, sound: "Basso")
+                    }
+                }
+                return
+            }
+            store.lastAction = "已关闭同步（时区保持 \(cur)）"
+            log("关闭同步开关（不修改系统时区）：autoHome=\(store.autoHome) 当前=\(cur) 归位目标=\(home)")
+            let tip = store.autoHome
+                ? "，当前已是归位时区 \(home)"
+                : "，当前仍为 \(cur)（自动归位已关闭）"
             notify(title: "AutoZ 已关闭同步", message: "不再跟随出口 IP\(tip)。")
             refresh()
         } else {
@@ -1829,26 +1957,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         perform(apply: false)
     }
 
-    @objc private func restoreOriginal(_ sender: NSMenuItem) {
-        guard let orig = store.originalZone else { return }
-        store.lastAction = "手动恢复 \(orig)"
+    /// 回到归位时区：把系统时区写回 `homeZone`（默认东八区），还原「自动设置时区」开关，
+    /// 并关闭同步。**不再使用「开启同步前的快照」** —— 那个值可能被跟随功能自己写脏。
+    @objc private func restoreHome(_ sender: NSMenuItem) {
+        let home = store.homeZone
+        guard let tz = TimeZone(identifier: home) else {
+            notify(title: "AutoZ 归位失败", message: "归位时区不是合法的 IANA 标识：\(home)", sound: "Basso")
+            return
+        }
+        let name = zoneCNName(tz)
+        store.lastAction = "手动归位 \(home)"
+        log("手动归位 → \(home)（\(name)）")
         after { [weak self] in
             guard let self = self else { return }
-            let out = applySystemZone(orig, autoTZ: self.store.originalAutoTZ)
-            switch out {
-            case .changed, .already:
-                notify(title: "AutoZ 已恢复", message: "系统时区 = \(orig)，并还原自动设置时区开关。")
-                self.store.originalZone = nil
-                self.store.originalAutoTZ = nil
+            switch applySystemZone(home, autoTZ: self.store.originalAutoTZ) {
+            case .changed(let z):
+                self.store.lastAction = "已归位 \(z)"
+                notify(title: "AutoZ 已归位", message: "系统时区 = \(z)（\(name)）")
+                self.store.syncEnabled = false
+                self.stopFollowing()
+            case .already(let z):
+                notify(title: "AutoZ", message: "系统时区已经是 \(z) 了，无需修改。")
                 self.store.syncEnabled = false
                 self.stopFollowing()
             case .cancelled:
                 notify(title: "AutoZ", message: "已取消，未修改系统时区")
             case .failed(let e):
-                notify(title: "AutoZ 恢复失败", message: e)
+                notify(title: "AutoZ 归位失败", message: e, sound: "Basso")
             }
-            self.refresh()
         }
+    }
+
+    /// 改「归位时区」。传进来的必须是合法 IANA 标识，否则拒绝并告知。
+    @objc private func setHomeZone(_ id: String) {
+        guard TimeZone(identifier: id) != nil else {
+            notify(title: "AutoZ", message: "「\(id)」不是合法的时区标识", sound: "Basso")
+            return
+        }
+        store.homeZone = id
+        store.lastAction = "归位时区 → \(id)"
+        log("归位时区改为 \(id)")
+        refresh()
+    }
+
+    @objc private func setAutoHome(_ on: Bool) {
+        store.autoHome = on
+        store.lastAction = on ? "已开启自动归位" : "已关闭自动归位"
+        log("自动归位 → \(on ? "开" : "关")")
+        refresh()
     }
 
     @objc private func toggleSeconds(_ sender: NSMenuItem) {
@@ -1943,7 +2099,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         out.append("时间模板: \(clockPattern(showSeconds: store.showSeconds))  显示秒=\(store.showSeconds)")
         out.append("系统时区: \(systemZoneID())")
         out.append("自动设置时区: \(String(describing: autoTimeZoneEnabled()))")
-        out.append("同步开关: \(store.syncEnabled ? "开" : "关")  原始时区记录: \(store.originalZone ?? "无")")
+        out.append("同步开关: \(store.syncEnabled ? "开" : "关")  归位时区: \(store.homeZone)"
+                   + "  自动归位: \(store.autoHome ? "开" : "关")")
+        // 旧快照只作诊断留存，**不再是恢复目标**（可能被跟随功能自己写脏）
+        out.append("开启前快照（仅诊断）: \(store.originalZone ?? "无")")
         out.append("最近动作: \(store.lastAction)")
         out.append("改时区通道: \(store.privBackend.rawValue)（上次实际用: \(store.lastBackend)）")
         out.append("免授权助手: \(HelperChannel.statusText)")
@@ -2383,7 +2542,13 @@ extension AppDelegate: AutoZActions {
     func azToggleSync()      { toggleSync(NSMenuItem()) }
     func azCheckAndSync()    { store.lastAction = "立即检查并同步"; perform(apply: true) }
     func azCheckOnly()       { store.lastAction = "仅查询"; perform(apply: false) }
-    func azRestore()         { restoreOriginal(NSMenuItem()) }
+    func azRestoreHome()     { restoreHome(NSMenuItem()) }
+    func azSetHomeZone(_ id: String) { setHomeZone(id) }
+
+    func azSetAutoHome(_ on: Bool) {
+        guard store.autoHome != on else { return }
+        setAutoHome(on)
+    }
 
     func azSetShowSeconds(_ on: Bool) {
         guard store.showSeconds != on else { return }
