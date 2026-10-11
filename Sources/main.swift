@@ -52,7 +52,7 @@ enum K {
     static let version: String = {
         if let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
            !v.isEmpty { return v }
-        return "0.8.8"
+        return "0.9.0"
     }()
     static let logPath     = NSHomeDirectory() + "/Library/Logs/AutoZ.log"
     static let appSupport  = NSHomeDirectory() + "/Library/Application Support/AutoZ"
